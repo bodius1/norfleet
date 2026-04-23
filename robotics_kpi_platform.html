@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Norfleet</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0c10;
+      --bg2: #10131a;
+      --bg3: #161b24;
+      --border: rgba(255,255,255,0.07);
+      --border2: rgba(255,255,255,0.12);
+      --accent: #00e5ff;
+      --accent2: #7c3aed;
+      --accent3: #10b981;
+      --accent4: #f59e0b;
+      --danger: #ef4444;
+      --text: #e2e8f0;
+      --text2: #94a3b8;
+      --text3: #475569;
+      --card: #12161f;
+      --font-mono: "JetBrains Mono", monospace;
+      --font-display: "Syne", sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-display);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    .grid-bg {
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,229,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,229,255,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .scan-line {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.015) 2px, rgba(0,0,0,0.015) 4px);
+    }
+
+    .orb {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(80px);
+      pointer-events: none;
+      z-index: 0;
+      animation: orb-float 8s ease-in-out infinite;
+    }
+    .orb1 { width: 400px; height: 400px; background: rgba(0,229,255,0.06); top: -100px; right: -100px; }
+    .orb2 { width: 300px; height: 300px; background: rgba(124,58,237,0.08); bottom: 100px; left: -100px; animation-delay: -4s; }
+    @keyframes orb-float {
+      0%, 100% { transform: translate(0, 0); }
+      50% { transform: translate(20px, -20px); }
+    }
+
+    .header {
+      position: relative;
+      z-index: 10;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      background: rgba(10,12,16,0.92);
+      backdrop-filter: blur(20px);
+    }
+
+    .logo-area { display: flex; align-items: center; gap: 12px; }
+
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .logo-text {
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      color: #ffffff;
+    }
+    .logo-text span { color: var(--accent); }
+
+    .logo-sub {
+      font-size: 10px;
+      font-weight: 400;
+      color: var(--text2);
+      font-family: var(--font-mono);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    .header-center {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text3);
+    }
+
+    .pulse-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent3);
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.85); }
+    }
+
+    .live-badge {
+      padding: 3px 10px;
+      border-radius: 100px;
+      background: rgba(16,185,129,0.1);
+      border: 1px solid rgba(16,185,129,0.3);
+      font-size: 10px;
+      font-family: var(--font-mono);
+      color: var(--accent3);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .header-right { display: flex; align-items: center; gap: 10px; }
+
+    .status-chips { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .chip {
+      padding: 4px 10px;
+      border-radius: 100px;
+      font-size: 10px;
+      font-family: var(--font-mono);
+      border: 1px solid;
+    }
+    .chip.green { color: var(--accent3); border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.08); }
+    .chip.amber { color: var(--accent4); border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.08); }
+    .chip.blue { color: var(--accent); border-color: rgba(0,229,255,0.3); background: rgba(0,229,255,0.08); }
+
+    .nav-bar {
+      position: relative;
+      z-index: 9;
+      display: flex;
+      gap: 0;
+      padding: 0 24px;
+      background: rgba(10,12,16,0.85);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-tab {
+      padding: 14px 20px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text3);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    .nav-tab:hover { color: var(--text2); }
+    .nav-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    .main {
+      position: relative;
+      z-index: 1;
+      padding: 20px 24px 32px;
+      max-width: 1280px;
+      margin: 0 auto;
+    }
+
+    .view { display: none; }
+    .view.active { display: block; }
+
+    .row-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+
+    .panel-title {
+      font-size: 13px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-badge {
+      font-size: 9px;
+      font-family: var(--font-mono);
+      padding: 2px 8px;
+      border-radius: 100px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+    .badge-cyan { background: rgba(0,229,255,0.1); color: var(--accent); border: 1px solid rgba(0,229,255,0.2); }
+    .badge-purple { background: rgba(124,58,237,0.1); color: #a78bfa; border: 1px solid rgba(124,58,237,0.2); }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .form-row.single { grid-template-columns: 1fr; }
+
+    label.field-lbl {
+      display: block;
+      font-size: 10px;
+      font-family: var(--font-mono);
+      color: var(--text3);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    input, select {
+      width: 100%;
+      background: var(--bg3);
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 10px 12px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      outline: none;
+    }
+
+    .btn-primary {
+      padding: 10px 16px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, var(--accent), #0099aa);
+      border: none;
+      color: #000;
+      font-family: var(--font-display);
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: 0.5px;
+    }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(0,229,255,0.25); }
+
+    .ai-detect-btn {
+      padding: 10px 16px;
+      border-radius: 8px;
+      background: rgba(124,58,237,0.1);
+      border: 1px solid rgba(124,58,237,0.3);
+      color: #a78bfa;
+      font-family: var(--font-display);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .ai-detect-btn:hover { background: rgba(124,58,237,0.2); }
+
+    .list {
+      max-height: 240px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: 10px;
+    }
+
+    .list-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      font-family: var(--font-mono);
+    }
+    .list-item:last-child { border-bottom: none; }
+
+    .muted { color: var(--text2); font-size: 11px; font-family: var(--font-mono); }
+
+    .kpi-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    .kpi-tag {
+      background: rgba(0,229,255,0.08);
+      border: 1px solid rgba(0,229,255,0.25);
+      color: var(--accent);
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+    }
+
+    .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 14px 0; }
+    .stat-mini {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      text-align: center;
+    }
+    .stat-mini-val { font-size: 20px; font-weight: 700; font-family: var(--font-mono); color: var(--accent3); }
+    .stat-mini-lbl {
+      font-size: 9px;
+      font-family: var(--font-mono);
+      color: var(--text3);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-top: 4px;
+    }
+
+    .charts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+    .chart-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      height: 240px;
+    }
+    .chart-card .chart-title {
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--text3);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .chart-card canvas { width: 100% !important; height: 190px !important; }
+
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 1000;
+      background: #1a2030;
+      border: 1px solid var(--border2);
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transform: translateX(120%);
+      transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+      max-width: 340px;
+    }
+    .toast.show { transform: translateX(0); }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+    @media (max-width: 960px) {
+      .row-2, .charts { grid-template-columns: 1fr; }
+      .stat-row { grid-template-columns: repeat(2, 1fr); }
+      .header { flex-wrap: wrap; gap: 12px; }
+      .header-center { order: 3; width: 100%; justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+  <div class="grid-bg"></div>
+  <div class="scan-line"></div>
+  <div class="orb orb1"></div>
+  <div class="orb orb2"></div>
+
+  <header class="header">
+    <div class="logo-area">
+      <div class="logo-icon">⬡</div>
+      <div>
+        <div class="logo-text">NOR<span>FLEET</span></div>
+        <div class="logo-sub">Industrial Robot KPI Platform</div>
+      </div>
+    </div>
+    <div class="header-center">
+      <div class="pulse-dot"></div>
+      <div class="live-badge"><div class="pulse-dot" style="width:5px;height:5px"></div>LIVE</div>
+      <span id="live-clock"></span>
+      <span>&nbsp;·&nbsp;</span>
+      <span>Norfleet MVP</span>
+    </div>
+    <div class="header-right">
+      <div class="status-chips">
+        <div class="chip green" id="chip-active">0 Active</div>
+        <div class="chip amber" id="chip-idle">0 Idle</div>
+        <div class="chip blue" id="chip-charging">0 Charging</div>
+      </div>
+    </div>
+  </header>
+
+  <nav class="nav-bar">
+    <div class="nav-tab active" data-view="builder" onclick="switchView('builder', this)"><span>⬡</span>Fleet Builder</div>
+    <div class="nav-tab" data-view="monitor" onclick="switchView('monitor', this)"><span>◈</span>KPI Monitor</div>
+  </nav>
+
+  <main class="main">
+    <div id="view-builder" class="view active">
+      <div class="row-2">
+        <section class="panel">
+          <div class="panel-header">
+            <div class="panel-title">⬡ Add Robot</div>
+            <span class="panel-badge badge-cyan">Registry</span>
+          </div>
+          <label class="field-lbl">Display name</label>
+          <div class="form-row single">
+            <input id="robot-name" type="text" placeholder="e.g. Induction Bot 7" />
+          </div>
+          <label class="field-lbl">Model &amp; zone</label>
+          <div class="form-row">
+            <select id="robot-model">
+              <option value="Stretch">Stretch</option>
+              <option value="LocusBot">LocusBot</option>
+              <option value="Chuck">Chuck</option>
+              <option value="CartConnect">CartConnect</option>
+            </select>
+            <input id="robot-zone" type="text" placeholder="Zone (A, B, ...)" />
+          </div>
+          <label class="field-lbl">Task profile</label>
+          <div class="form-row single">
+            <input id="robot-task" type="text" placeholder="e.g. Multi-SKU pick" />
+          </div>
+          <button class="btn-primary" type="button" id="add-robot-btn" style="margin-top:8px;width:100%">+ Add Robot</button>
+          <div class="panel-header" style="margin-top:18px;margin-bottom:0">
+            <div class="panel-title">Robots</div>
+          </div>
+          <div class="list" id="robots-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div class="panel-title">◈ Personalized Fleet</div>
+            <span class="panel-badge badge-purple">Custom</span>
+          </div>
+          <label class="field-lbl">Fleet name</label>
+          <div class="form-row">
+            <input id="fleet-name" type="text" placeholder="e.g. Outbound peak fleet" />
+            <button class="btn-primary" type="button" id="create-fleet-btn" style="height:100%">Create Fleet</button>
+          </div>
+          <p class="muted" style="margin:10px 0 6px">Select robots to include in this fleet.</p>
+          <div class="list" id="fleet-robot-select"></div>
+          <label class="field-lbl" style="margin-top:14px">Active fleet</label>
+          <select id="fleet-select"></select>
+        </section>
+      </div>
+    </div>
+
+    <div id="view-monitor" class="view">
+      <section class="panel">
+        <div class="panel-header">
+          <div class="panel-title">◈ AI KPI Detection &amp; Live Charts</div>
+          <span class="panel-badge badge-purple">Monitor</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:8px">
+          <label class="field-lbl" style="margin:0;width:100%">Fleet</label>
+          <select id="fleet-select-monitor" style="max-width:320px"></select>
+          <button class="ai-detect-btn" type="button" id="detect-kpis-btn">◈ Detect KPIs (AI)</button>
+        </div>
+        <p class="muted" id="status">Choose a fleet, run AI detection, then watch live series.</p>
+        <div class="kpi-list" id="kpi-list"></div>
+        <div class="stat-row">
+          <div class="stat-mini"><div class="stat-mini-val" id="sum-total">0</div><div class="stat-mini-lbl">Robots</div></div>
+          <div class="stat-mini"><div class="stat-mini-val" id="sum-active">0</div><div class="stat-mini-lbl">Active</div></div>
+          <div class="stat-mini"><div class="stat-mini-val" id="sum-idle">0</div><div class="stat-mini-lbl">Idle</div></div>
+          <div class="stat-mini"><div class="stat-mini-val" id="sum-charging">0</div><div class="stat-mini-lbl">Charging</div></div>
+        </div>
+        <div class="charts" id="charts"></div>
+      </section>
+    </div>
+  </main>
+
+  <div class="toast" id="toast" role="status">
+    <span id="toast-icon"></span>
+    <span id="toast-msg"></span>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="/webapp.js"></script>
+</body>
+</html>

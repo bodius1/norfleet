@@ -780,6 +780,353 @@
     .agents-subview { display: none; }
     .agents-subview.active { display: block; }
 
+    .agents-overview-footnote {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .agents-inline-link {
+      appearance: none;
+      border: none;
+      background: none;
+      padding: 0;
+      font: inherit;
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+
+    .agents-inline-link:hover {
+      color: #5ef0ff;
+    }
+
+    /* —— Technician Report —— */
+    .technician-report {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .tr-hero {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 18px;
+    }
+
+    .tr-hero h2 {
+      margin: 0 0 6px;
+      font-size: 16px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: var(--text);
+      letter-spacing: 0.5px;
+    }
+
+    .tr-hero .muted {
+      margin: 0;
+      max-width: 720px;
+      line-height: 1.5;
+    }
+
+    .tr-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .tr-summary-stat {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      text-align: center;
+    }
+
+    .tr-summary-stat .val {
+      font-size: 22px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: var(--accent);
+      line-height: 1.2;
+    }
+
+    .tr-summary-stat .lbl {
+      font-size: 10px;
+      font-family: var(--font-mono);
+      color: var(--text3);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin-top: 6px;
+    }
+
+    .tr-section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+    }
+
+    .tr-section .panel-header {
+      margin-bottom: 12px;
+    }
+
+    .tr-section-title {
+      font-size: 13px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      color: var(--text);
+    }
+
+    .tr-kpi-anomaly-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 10px;
+    }
+
+    .tr-anomaly-card {
+      background: var(--bg2);
+      border: 1px solid var(--border2);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+
+    .tr-anomaly-card .kpi-name {
+      font-size: 12px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+
+    .tr-anomaly-row {
+      font-size: 12px;
+      color: var(--text2);
+      line-height: 1.45;
+      margin-bottom: 4px;
+    }
+
+    .tr-anomaly-row:last-child { margin-bottom: 0; }
+
+    .tr-anomaly-row span.lbl {
+      color: var(--text3);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      display: block;
+      margin-bottom: 2px;
+    }
+
+    .tr-rec-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .tr-rec-row {
+      display: grid;
+      grid-template-columns: 28px 1fr auto;
+      gap: 10px 12px;
+      align-items: start;
+      background: var(--bg2);
+      border: 1px solid var(--border2);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+
+    .tr-rec-row.applied {
+      opacity: 0.85;
+      border-color: rgba(0, 229, 255, 0.2);
+    }
+
+    .tr-rec-row .nf-checkbox {
+      margin-top: 3px;
+    }
+
+    .tr-rec-body h4 {
+      margin: 0 0 6px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .tr-rec-body p {
+      margin: 0 0 8px;
+      font-size: 12px;
+      color: var(--text2);
+      line-height: 1.45;
+    }
+
+    .tr-rec-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      align-items: center;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--text3);
+    }
+
+    .tr-rec-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: stretch;
+      min-width: 160px;
+    }
+
+    .tr-action-btn {
+      appearance: none;
+      border: 1px solid rgba(0, 229, 255, 0.4);
+      background: rgba(0, 229, 255, 0.08);
+      color: var(--accent);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .tr-action-btn:hover:not(:disabled) {
+      background: rgba(0, 229, 255, 0.14);
+      box-shadow: 0 0 12px rgba(0, 229, 255, 0.15);
+    }
+
+    .tr-action-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .tr-action-btn.tr-action-secondary {
+      border-color: var(--border2);
+      background: var(--bg3);
+      color: var(--text2);
+    }
+
+    .severity-badge {
+      font-size: 9px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid;
+    }
+
+    .severity-badge.critical { color: #f87171; border-color: rgba(248, 113, 113, 0.5); background: rgba(248, 113, 113, 0.1); }
+    .severity-badge.high { color: #fb923c; border-color: rgba(251, 146, 60, 0.45); background: rgba(251, 146, 60, 0.08); }
+    .severity-badge.medium { color: #facc15; border-color: rgba(250, 204, 21, 0.4); background: rgba(250, 204, 21, 0.06); }
+    .severity-badge.low { color: #94a3b8; border-color: rgba(148, 163, 184, 0.35); background: rgba(148, 163, 184, 0.08); }
+
+    .tr-source-pill {
+      font-size: 10px;
+      font-family: var(--font-mono);
+      padding: 3px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border2);
+      color: var(--text2);
+      background: var(--bg3);
+    }
+
+    .tr-action-type {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text3);
+    }
+
+    .tr-status-pill {
+      font-size: 10px;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(0, 229, 255, 0.35);
+      color: var(--accent);
+      background: rgba(0, 229, 255, 0.06);
+    }
+
+    .tr-selffix-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 10px;
+    }
+
+    .tr-selffix-card {
+      background: var(--bg2);
+      border: 1px solid rgba(0, 229, 255, 0.18);
+      border-radius: 10px;
+      padding: 14px;
+    }
+
+    .tr-selffix-card p {
+      margin: 0 0 10px;
+      font-size: 12px;
+      color: var(--text2);
+      line-height: 1.5;
+    }
+
+    .tr-narrative-list {
+      list-style: none;
+      counter-reset: trtake;
+      margin: 0;
+      padding: 0;
+    }
+
+    .tr-narrative-list li {
+      counter-increment: trtake;
+      position: relative;
+      padding: 10px 12px 10px 40px;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      color: var(--text2);
+      line-height: 1.5;
+    }
+
+    .tr-narrative-list li:last-child { margin-bottom: 0; }
+
+    .tr-narrative-list li::before {
+      content: counter(trtake);
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 20px;
+      height: 20px;
+      border-radius: 5px;
+      background: rgba(0, 229, 255, 0.12);
+      border: 1px solid rgba(0, 229, 255, 0.25);
+      color: var(--accent);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    @media (max-width: 1100px) {
+      .tr-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 720px) {
+      .tr-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .tr-rec-row { grid-template-columns: 1fr; }
+      .tr-rec-actions { flex-direction: row; flex-wrap: wrap; min-width: 0; }
+    }
+
     .builder-workspace {
       display: flex;
       flex-direction: column;
@@ -1215,6 +1562,7 @@
     <div class="nav-tab active" data-view="builder" onclick="switchView('builder', this)"><span>⬡</span>Fleet Builder</div>
     <div class="nav-tab" data-view="monitor" onclick="switchView('monitor', this)"><span>◈</span>KPI Monitor</div>
     <div class="nav-tab" data-view="agents" onclick="switchView('agents', this)"><span>◇</span>AI Agents</div>
+    <div class="nav-tab" data-view="technician-report" onclick="switchView('technician-report', this)"><span>✦</span>Technician Report</div>
   </nav>
 
   <main class="main">
@@ -1341,14 +1689,10 @@
           </div>
         </div>
 
-        <section class="agents-takeaway-panel">
-          <div class="panel-header">
-            <div class="panel-title">Technician Takeaway</div>
-            <span class="panel-badge badge-cyan">Prioritized</span>
-          </div>
-          <p class="muted" style="margin-bottom:10px">Repair and checkup actions ranked for the floor team.</p>
-          <ol class="takeaway-list" id="agents-takeaway-list"></ol>
-        </section>
+        <p class="muted agents-overview-footnote">
+          Technician takeaway and AI-generated maintenance actions live in
+          <button type="button" class="agents-inline-link" onclick="switchView('technician-report', document.querySelector('.nav-tab[data-view=&quot;technician-report&quot;]'))">Technician Report</button>.
+        </p>
       </div>
 
       <div id="agents-subview-builder" class="agents-subview">
@@ -1412,6 +1756,10 @@
           <ul class="suggestion-list" id="builder-suggestions-list"></ul>
         </section>
       </div>
+    </div>
+
+    <div id="view-technician-report" class="view">
+      <div id="technician-report-root" class="technician-report"></div>
     </div>
   </main>
 

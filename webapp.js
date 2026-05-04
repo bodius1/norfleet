@@ -13,7 +13,12 @@ const state = {
   builderExpanded: false,
   overviewExpanded: false,
   agentDraftByAgent: {},
-  dirtyFieldsByAgent: {}
+  dirtyFieldsByAgent: {},
+  /** Review checkboxes + applied/sent status for Technician Report actions. */
+  technicianReport: {
+    reviewed: {},
+    actionStatus: {}
+  }
 };
 
 const MOCK_ROBOT_REGISTRY = [
@@ -36,6 +41,130 @@ const BUILDER_AI_SUGGESTIONS = [
   "Increase lidar obstruction sensitivity for R-002 in Zone B.",
   "Add a Route Congestion Agent for repeated traffic delays near Sort Cell 3.",
   "Lower auto-ticket confidence threshold during peak shift windows."
+];
+
+/** Preset glyphs for workflow nodes (Agentic AI Builder). */
+const WORKFLOW_ICON_OPTIONS = ["⬡", "◆", "▣", "⬢", "↻"];
+
+/** KPI anomaly mock data (aligned with KPI Monitor naming). */
+const MOCK_KPI_ANOMALIES = [
+  {
+    kpi: "Pick Accuracy",
+    anomaly: "Below 92% for 3 consecutive 15m windows",
+    target: "R-003 · Sort Cell 3",
+    severity: "High",
+    cause: "Grip misalignment + SKU mix change on lane B",
+    action: "Open pick-accuracy monitor path; verify end-effector calibration"
+  },
+  {
+    kpi: "Travel Time",
+    anomaly: "+18% vs 7-day baseline on outbound legs",
+    target: "R-002 · Zone A → shipping",
+    severity: "Medium",
+    cause: "Route congestion and intersection queuing",
+    action: "Tune Root Cause Agent travel-time sensitivity; consider route agent"
+  },
+  {
+    kpi: "Error Rate",
+    anomaly: "Spike in recoverable fault codes E-2401",
+    target: "Fleet · mixed zones",
+    severity: "High",
+    cause: "Handoff timing between AMR and dock",
+    action: "Dispatch targeted inspection; cross-check with traffic delay signal"
+  },
+  {
+    kpi: "Traffic Delay",
+    anomaly: "Repeated dwell > 90s near Sort Cell 3",
+    target: "R-003 / intersection 12",
+    severity: "Medium",
+    cause: "Choke point + mixed human/robot traffic",
+    action: "Add Route Congestion Agent after health monitor; adjust bid rules"
+  },
+  {
+    kpi: "Battery Health",
+    anomaly: "Charging alignment warnings (3× in 48h)",
+    target: "R-004 · Outbound Cart",
+    severity: "Low",
+    cause: "Dock pad wear + approach angle drift",
+    action: "Schedule charging dock inspection; log approach vectors"
+  }
+];
+
+/**
+ * Action queue for Technician Report (AI-generated maintenance actions).
+ * `kind` drives applyTechnicianAction / createAgentFromRecommendation / updateAgentFromRecommendation.
+ */
+const TECHNICIAN_REPORT_ACTIONS = [
+  {
+    id: "rec-pick-accuracy-agent",
+    title: "Create Pick Accuracy Monitor Agent",
+    detail: "Create new AI agent focused on pick failures; correlate with sort cell and SKU mix.",
+    severity: "High",
+    source: "KPI Monitor",
+    kpiAnomalySource: "Pick Accuracy",
+    affectedRobots: "R-003",
+    actionType: "Agent workflow update",
+    buttonLabel: "Create Agent",
+    kind: "create_agent",
+    selfFix: true,
+    appliedKey: "pick-accuracy-monitor"
+  },
+  {
+    id: "rec-travel-sensitivity",
+    title: "Increase Travel Time Sensitivity",
+    detail: "Travel Time increased 18% on outbound routes. Tighten Root Cause Agent trigger for travel-time clusters.",
+    severity: "Medium",
+    source: "KPI Monitor",
+    kpiAnomalySource: "Travel Time",
+    affectedRobots: "R-002, outbound routes",
+    actionType: "Monitoring rule change",
+    buttonLabel: "Apply Update",
+    kind: "apply_update",
+    selfFix: true,
+    appliedKey: "root-cause-travel"
+  },
+  {
+    id: "rec-route-congestion",
+    title: "Add Route Congestion Agent",
+    detail: "Traffic Delay anomalies repeated near Sort Cell 3. Add workflow block after Pre-Shift Monitor.",
+    severity: "High",
+    source: "AI Agent",
+    kpiAnomalySource: "Traffic Delay",
+    affectedRobots: "R-003",
+    actionType: "Agent workflow update",
+    buttonLabel: "Create Agent",
+    kind: "create_agent",
+    selfFix: true,
+    appliedKey: "route-congestion"
+  },
+  {
+    id: "rec-charging-dock",
+    title: "Send Charging Dock Inspection",
+    detail: "R-004 has repeated charging alignment warnings. Create technician task for dock and approach check.",
+    severity: "Low",
+    source: "AI Agent",
+    kpiAnomalySource: "Battery Health",
+    affectedRobots: "R-004",
+    actionType: "Technician task",
+    buttonLabel: "Send to Technician",
+    kind: "technician_task",
+    selfFix: false,
+    appliedKey: "charging-dock-task"
+  },
+  {
+    id: "rec-peak-autoticket",
+    title: "Apply Peak Shift Auto-Ticket Rule",
+    detail: "Same faults recurring during peak windows. Lower auto-ticket confidence and tighten Maintenance Planner escalation.",
+    severity: "Critical",
+    source: "Technician Feedback",
+    kpiAnomalySource: "Error Rate",
+    affectedRobots: "Fleet-wide",
+    actionType: "Maintenance ticket",
+    buttonLabel: "Apply to Agent Builder",
+    kind: "apply_builder",
+    selfFix: true,
+    appliedKey: "peak-shift-planner"
+  }
 ];
 
 const byId = (id) => document.getElementById(id);
@@ -256,6 +385,10 @@ function switchView(id, tabEl) {
   const view = byId(`view-${id}`);
   if (view) view.classList.add("active");
   if (tabEl) tabEl.classList.add("active");
+  if (id === "technician-report") {
+    renderTechnicianReport();
+    return;
+  }
   if (id === "agents") {
     renderAgentsView();
     return;
@@ -314,7 +447,6 @@ function refreshAgentsSharedUI() {
   renderOverviewWorkflow();
   renderAgentStatusCardsFromConfig();
   updateAgentMetricsFromConfig();
-  renderTechnicianTakeaways();
   syncBuilderWorkflowSelection();
 }
 
@@ -464,21 +596,6 @@ function buildOverviewTakeawaysFromConfig() {
   ];
 }
 
-function renderTechnicianTakeaways() {
-  const listEl = byId("agents-takeaway-list");
-  if (!listEl) return;
-  const takeaways = buildOverviewTakeawaysFromConfig();
-  listEl.innerHTML = takeaways
-    .map(
-      (t) => `
-      <li>
-        ${escapeHtml(t.text)}
-        <div class="takeaway-priority">${escapeHtml(t.priority)}</div>
-      </li>`
-    )
-    .join("");
-}
-
 function renderOverviewWorkflow() {
   renderWorkflowDiagram("agents-overview-workflow", { interactive: false });
 }
@@ -532,10 +649,15 @@ function syncBuilderWorkflowSelection() {
   if (state.agentSubView !== "builder") return;
   const wrap = byId("agents-builder-workflow");
   if (!wrap) return;
-  state.agentBuilderConfig.workflowOrder.forEach((id) => {
-    const ag = getAgent(id);
-    const titleEl = byId(`builder-wf-title-${id}`);
-    if (titleEl && ag) titleEl.textContent = ag.name;
+  wrap.querySelectorAll(".builder-workflow-node[data-agent-id]").forEach((btn) => {
+    const ag = getAgent(btn.dataset.agentId);
+    if (!ag) return;
+    const iconEl = btn.querySelector(".workflow-node-icon");
+    const titleEl = btn.querySelector(".workflow-node-title");
+    const metaEl = btn.querySelector(".workflow-node-meta");
+    if (iconEl) iconEl.textContent = ag.icon;
+    if (titleEl) titleEl.textContent = ag.name;
+    if (metaEl) metaEl.textContent = ag.stage;
   });
   wrap.querySelectorAll(".builder-workflow-node").forEach((btn) => {
     btn.classList.toggle("selected", btn.dataset.agentId === state.selectedAgentId);
@@ -581,6 +703,403 @@ function updateAgentMetricsFromConfig() {
   if (mRes) mRes.textContent = String(dm.resolvedIssues);
 }
 
+function getTechnicianActionStatus(actionId) {
+  return state.technicianReport.actionStatus[actionId] || "pending";
+}
+
+function setTechnicianActionStatus(actionId, status) {
+  state.technicianReport.actionStatus[actionId] = status;
+}
+
+function getTechnicianRecommendationById(id) {
+  return TECHNICIAN_REPORT_ACTIONS.find((a) => a.id === id) || null;
+}
+
+function insertWorkflowAgentAfter(anchorId, agent) {
+  ensureAgentBuilderConfig();
+  const cfg = state.agentBuilderConfig;
+  if (cfg.agents.some((a) => a.id === agent.id)) return { ok: false, reason: "exists" };
+  cfg.agents.push(agent);
+  const o = cfg.workflowOrder;
+  const i = o.indexOf(anchorId);
+  if (i === -1) return { ok: false, reason: "no-anchor" };
+  o.splice(i + 1, 0, agent.id);
+  invalidateAgentDraft(agent.id);
+  return { ok: true };
+}
+
+function invalidateAgentDraft(agentId) {
+  delete state.agentDraftByAgent[agentId];
+  if (state.dirtyFieldsByAgent[agentId]) state.dirtyFieldsByAgent[agentId].clear();
+}
+
+function createPickAccuracyMonitorAgent() {
+  const agent = {
+    id: "pick-accuracy-monitor",
+    icon: "▣",
+    stage: "quality",
+    name: "Pick Accuracy Monitor",
+    role: "Pick failure detection & sort-cell correlation",
+    triggerCondition: "Pick accuracy < 92% for 3 consecutive 15m windows (KPI Monitor)",
+    assignedTask: "Correlating pick errors with R-003 / Sort Cell 3",
+    priorityLevel: "P1",
+    escalationRule: "Page pick lead if accuracy < 88% for 1h",
+    status: "active",
+    failures: "Anomaly: below-threshold window (3×)",
+    robots: { "R-001": true, "R-002": true, "R-003": true, "R-004": false },
+    permissions: {
+      readLogs: true,
+      createTicket: true,
+      recommendRepair: true,
+      requestApproval: false,
+      updateHistory: true
+    },
+    params: {
+      failureThreshold: 2,
+      checkFrequency: "Every 5 minutes",
+      runSchedule: "24/7 on trigger",
+      confidenceRequired: 0.9,
+      autoCreateTicket: true,
+      requireTechnicianApproval: false
+    }
+  };
+  return insertWorkflowAgentAfter("pre-shift-monitor", agent);
+}
+
+function createRouteCongestionAgent() {
+  ensureAgentBuilderConfig();
+  const anchor = state.agentBuilderConfig.workflowOrder.includes("pick-accuracy-monitor")
+    ? "pick-accuracy-monitor"
+    : "pre-shift-monitor";
+  const agent = {
+    id: "route-congestion",
+    icon: "⬢",
+    stage: "route",
+    name: "Route Congestion Agent",
+    role: "Traffic delay clustering & lane pressure",
+    triggerCondition: "Traffic Delay dwell > 90s near Sort Cell 3 (repeated)",
+    assignedTask: "Reroute suggestions and intersection de-bottlenecking",
+    priorityLevel: "P2",
+    escalationRule: "Notify floor lead if congestion index > 0.7 for 20m",
+    status: "active",
+    failures: "3 traffic delay clusters (48h)",
+    robots: { "R-001": true, "R-002": true, "R-003": true, "R-004": true },
+    permissions: {
+      readLogs: true,
+      createTicket: true,
+      recommendRepair: true,
+      requestApproval: true,
+      updateHistory: true
+    },
+    params: {
+      failureThreshold: 3,
+      checkFrequency: "On traffic-delay spike",
+      runSchedule: "24/7",
+      confidenceRequired: 0.82,
+      autoCreateTicket: false,
+      requireTechnicianApproval: false
+    }
+  };
+  return insertWorkflowAgentAfter(anchor, agent);
+}
+
+function applyTravelTimeSensitivityUpdate() {
+  const root = getAgent("root-cause");
+  if (!root) return false;
+  const next = Math.max(2, (root.params.failureThreshold || 5) - 1);
+  updateAgentConfig("root-cause", "params.failureThreshold", next, false);
+  updateAgentConfig(
+    "root-cause",
+    "triggerCondition",
+    `≥${next} similar faults within 2h window (travel-time sensitivity tuned)`,
+    false
+  );
+  updateAgentConfig("root-cause", "assignedTask", "Analyzing repeated failures · travel-time aware", false);
+  invalidateAgentDraft("root-cause");
+  return true;
+}
+
+function applyPeakShiftPlannerUpdate() {
+  const mp = getAgent("maintenance-planner");
+  if (!mp) return false;
+  updateAgentConfig(
+    "maintenance-planner",
+    "escalationRule",
+    "Peak window: auto-ticket confidence 0.78; page on-call after 20m for recurring faults",
+    false
+  );
+  updateAgentConfig("maintenance-planner", "params.confidenceRequired", 0.78, false);
+  updateAgentConfig("maintenance-planner", "params.autoCreateTicket", true, false);
+  invalidateAgentDraft("maintenance-planner");
+  return true;
+}
+
+function afterTechnicianReportMutation() {
+  refreshAgentsSharedUI();
+  if (state.agentSubView === "builder") renderAgentBuilder();
+  if (state.agentSubView === "report") renderTechnicianReport();
+  scheduleLayoutBuilderConnectors();
+}
+
+function applyTechnicianAction(actionId) {
+  const rec = getTechnicianRecommendationById(actionId);
+  if (!rec) return;
+  if (getTechnicianActionStatus(rec.id) !== "pending") {
+    showToast("◇", "This action was already completed.");
+    return;
+  }
+
+  if (rec.kind === "technician_task") {
+    setTechnicianActionStatus(rec.id, "sent");
+    showToast("◇", "Sent to technician · charging dock inspection queued for R-004.");
+    afterTechnicianReportMutation();
+    return;
+  }
+
+  let ok = false;
+  let msg = "";
+  if (rec.id === "rec-pick-accuracy-agent") {
+    const r = createPickAccuracyMonitorAgent();
+    ok = r.ok;
+    msg = ok ? "Pick Accuracy Monitor Agent added to the workflow." : "Agent already in workflow.";
+  } else if (rec.id === "rec-route-congestion") {
+    const r = createRouteCongestionAgent();
+    ok = r.ok;
+    msg = ok ? "Route Congestion Agent added to the workflow." : "Agent already in workflow.";
+  } else if (rec.id === "rec-travel-sensitivity") {
+    ok = applyTravelTimeSensitivityUpdate();
+    msg = ok ? "Root Cause Agent sensitivity updated for travel-time anomalies." : "Could not update agent.";
+  } else if (rec.id === "rec-peak-autoticket") {
+    ok = applyPeakShiftPlannerUpdate();
+    msg = ok ? "Peak-shift auto-ticket rules applied in Maintenance Planner." : "Could not update agent.";
+  }
+
+  if (!ok) {
+    showToast("⚠", msg || "Action could not be applied.");
+    return;
+  }
+
+  setTechnicianActionStatus(rec.id, "applied");
+  ensureAgentBuilderConfig();
+  state.agentBuilderConfig.dashboardMetrics.suggestedFixes += 1;
+  showToast("◇", msg);
+  afterTechnicianReportMutation();
+}
+
+function createAgentFromRecommendation(actionId) {
+  const rec = getTechnicianRecommendationById(actionId);
+  if (!rec || rec.kind !== "create_agent") return;
+  applyTechnicianAction(actionId);
+}
+
+function updateAgentFromRecommendation(actionId) {
+  const rec = getTechnicianRecommendationById(actionId);
+  if (!rec || (rec.kind !== "apply_update" && rec.kind !== "apply_builder")) return;
+  applyTechnicianAction(actionId);
+}
+
+function setTechnicianReviewed(actionId, checked) {
+  state.technicianReport.reviewed[actionId] = checked;
+}
+
+function trSeverityClass(sev) {
+  const s = String(sev || "").toLowerCase();
+  if (s === "critical") return "critical";
+  if (s === "high") return "high";
+  if (s === "medium") return "medium";
+  return "low";
+}
+
+function computeTechnicianReportSummary() {
+  const actions = TECHNICIAN_REPORT_ACTIONS;
+  const pending = actions.filter((a) => getTechnicianActionStatus(a.id) === "pending").length;
+  const applied = actions.filter((a) => {
+    const st = getTechnicianActionStatus(a.id);
+    return st === "applied" || st === "sent";
+  }).length;
+  const selfFixEligible = actions.filter((a) => a.selfFix && getTechnicianActionStatus(a.id) === "pending").length;
+  const techApproval = actions.filter(
+    (a) => a.kind === "technician_task" && getTechnicianActionStatus(a.id) === "pending"
+  ).length;
+  const downtimeAvoided = 28 + applied * 6;
+  return {
+    totalAnomalies: MOCK_KPI_ANOMALIES.length,
+    recommendedActions: pending,
+    selfFixEligible,
+    techApproval,
+    downtimeAvoided
+  };
+}
+
+function getKpiMonitorBridgeNote() {
+  const keys = Object.keys(state.latestSeries || {});
+  if (keys.length === 0) {
+    return "KPI anomaly source: mock Norfleet monitor data. Run KPI Monitor on a fleet to align live series with this view.";
+  }
+  return `KPI Monitor live series: ${keys.slice(0, 6).join(", ")}${keys.length > 6 ? "…" : ""}. Anomaly cards below include mock + monitor-style labels.`;
+}
+
+function formatActionStatusLabel(st) {
+  if (st === "sent") return "Sent";
+  if (st === "applied") return "Applied";
+  return "";
+}
+
+function renderTechnicianReport() {
+  const root = byId("technician-report-root");
+  if (!root) return;
+  const sum = computeTechnicianReportSummary();
+  const takeaways = buildOverviewTakeawaysFromConfig();
+
+  const summaryHtml = `
+    <div class="tr-summary-grid">
+      <div class="tr-summary-stat"><div class="val">${sum.totalAnomalies}</div><div class="lbl">Total anomalies detected</div></div>
+      <div class="tr-summary-stat"><div class="val">${sum.recommendedActions}</div><div class="lbl">Recommended actions</div></div>
+      <div class="tr-summary-stat"><div class="val">${sum.selfFixEligible}</div><div class="lbl">Self-fix eligible</div></div>
+      <div class="tr-summary-stat"><div class="val">${sum.techApproval}</div><div class="lbl">Technician approval required</div></div>
+      <div class="tr-summary-stat"><div class="val">~${sum.downtimeAvoided}h</div><div class="lbl">Est. downtime avoided</div></div>
+    </div>`;
+
+  const anomalyCards = MOCK_KPI_ANOMALIES.map(
+    (a) => `
+    <div class="tr-anomaly-card">
+      <div class="kpi-name">${escapeHtml(a.kpi)}</div>
+      <div class="tr-anomaly-row"><span class="lbl">Anomaly detected</span>${escapeHtml(a.anomaly)}</div>
+      <div class="tr-anomaly-row"><span class="lbl">Affected robot / zone</span>${escapeHtml(a.target)}</div>
+      <div class="tr-anomaly-row"><span class="lbl">Severity</span><span class="severity-badge ${trSeverityClass(a.severity)}">${escapeHtml(a.severity)}</span></div>
+      <div class="tr-anomaly-row"><span class="lbl">Likely cause</span>${escapeHtml(a.cause)}</div>
+      <div class="tr-anomaly-row"><span class="lbl">Recommended action</span>${escapeHtml(a.action)}</div>
+    </div>`
+  ).join("");
+
+  const recRows = TECHNICIAN_REPORT_ACTIONS.map((rec) => {
+    const st = getTechnicianActionStatus(rec.id);
+    const done = st !== "pending";
+    const reviewed = state.technicianReport.reviewed[rec.id];
+    const statusHtml = done
+      ? `<span class="tr-status-pill">${escapeHtml(formatActionStatusLabel(st))}</span>`
+      : "";
+    const primaryDisabled = done || !reviewed ? "disabled" : "";
+    const rowClass = done ? "tr-rec-row applied" : "tr-rec-row";
+    return `
+    <div class="${rowClass}" data-tr-id="${escapeHtml(rec.id)}">
+      <input type="checkbox" class="nf-checkbox" data-tr-review="1" ${reviewed ? "checked" : ""} aria-label="Mark reviewed" />
+      <div class="tr-rec-body">
+        <h4>${escapeHtml(rec.title)}</h4>
+        <p>${escapeHtml(rec.detail)}</p>
+        <div class="tr-rec-meta">
+          <span class="severity-badge ${trSeverityClass(rec.severity)}">${escapeHtml(rec.severity)}</span>
+          <span class="tr-source-pill">${escapeHtml(rec.source)}</span>
+          <span class="tr-action-type">${escapeHtml(rec.actionType)}</span>
+          <span>KPI anomaly source: ${escapeHtml(rec.kpiAnomalySource)}</span>
+          <span>Affected: ${escapeHtml(rec.affectedRobots)}</span>
+          ${statusHtml}
+        </div>
+      </div>
+      <div class="tr-rec-actions">
+        <button type="button" class="tr-action-btn" data-tr-action="${escapeHtml(rec.id)}" ${primaryDisabled}>
+          ${escapeHtml(rec.buttonLabel)}
+        </button>
+      </div>
+    </div>`;
+  }).join("");
+
+  const selfFix = TECHNICIAN_REPORT_ACTIONS.filter((r) => r.selfFix);
+  const selfFixCards = selfFix
+    .map((rec) => {
+      const st = getTechnicianActionStatus(rec.id);
+      const done = st !== "pending";
+      const reviewed = state.technicianReport.reviewed[rec.id];
+      return `
+      <div class="tr-selffix-card">
+        <p><strong>${escapeHtml(rec.title)}</strong> — ${escapeHtml(rec.detail)}</p>
+        <button type="button" class="tr-action-btn" data-tr-action="${escapeHtml(rec.id)}" ${done || !reviewed ? "disabled" : ""}>
+          ${escapeHtml(rec.buttonLabel)}
+        </button>
+      </div>`;
+    })
+    .join("");
+
+  const narrative = takeaways
+    .map(
+      (t) => `
+      <li>
+        ${escapeHtml(t.text)}
+        <div class="takeaway-priority">${escapeHtml(t.priority)}</div>
+      </li>`
+    )
+    .join("");
+
+  root.innerHTML = `
+    <div class="tr-hero">
+      <h2>Technician Report</h2>
+      <p class="muted">AI-generated maintenance actions from KPI anomalies, agent signals, and technician feedback. This is the action layer: repair recommendations, workflow changes, and self-improving maintenance.</p>
+      <p class="muted" style="margin-top:8px;margin-bottom:0;font-size:11px">${escapeHtml(getKpiMonitorBridgeNote())}</p>
+    </div>
+
+    <section class="tr-section" aria-labelledby="tr-summary-h">
+      <div class="panel-header" style="margin-bottom:10px">
+        <div class="tr-section-title" id="tr-summary-h">Report summary</div>
+        <span class="panel-badge badge-cyan">Live</span>
+      </div>
+      ${summaryHtml}
+    </section>
+
+    <section class="tr-section" aria-labelledby="tr-kpi-h">
+      <div class="panel-header" style="margin-bottom:10px">
+        <div class="tr-section-title" id="tr-kpi-h">KPI anomaly insights</div>
+        <span class="panel-badge badge-purple">KPI Monitor</span>
+      </div>
+      <div class="tr-kpi-anomaly-grid">${anomalyCards}</div>
+    </section>
+
+    <section class="tr-section" aria-labelledby="tr-rec-h">
+      <div class="panel-header" style="margin-bottom:10px">
+        <div class="tr-section-title" id="tr-rec-h">Action recommendations / to-do</div>
+        <span class="panel-badge badge-cyan">Queue</span>
+      </div>
+      <p class="muted" style="margin-bottom:12px">Select rows to mark reviewed. Use Implement / Send to Technician / Apply to Agent Builder to close the loop.</p>
+      <div class="tr-rec-list">${recRows}</div>
+    </section>
+
+    <section class="tr-section" aria-labelledby="tr-sf-h">
+      <div class="panel-header" style="margin-bottom:10px">
+        <div class="tr-section-title" id="tr-sf-h">Self-fix / agent update suggestions</div>
+        <span class="panel-badge badge-purple">Agent workflow update</span>
+      </div>
+      <p class="muted" style="margin-bottom:12px">Apply changes directly into the shared Agentic AI Builder state and Overview workflow.</p>
+      <div class="tr-selffix-grid">${selfFixCards}</div>
+    </section>
+
+    <section class="tr-section" aria-labelledby="tr-nar-h">
+      <div class="panel-header" style="margin-bottom:10px">
+        <div class="tr-section-title" id="tr-nar-h">Narrative priorities</div>
+        <span class="panel-badge badge-cyan">Agents</span>
+      </div>
+      <p class="muted" style="margin-bottom:10px">Synced with current agent configuration (same source as former Overview takeaway).</p>
+      <ol class="tr-narrative-list">${narrative}</ol>
+    </section>
+  `;
+
+  root.querySelectorAll(".tr-rec-row [data-tr-review]").forEach((cb) => {
+    const row = cb.closest(".tr-rec-row");
+    const id = row?.dataset.trId;
+    if (!id) return;
+    cb.onchange = () => {
+      setTechnicianReviewed(id, cb.checked);
+      const isDone = getTechnicianActionStatus(id) !== "pending";
+      const shouldDisable = isDone || !cb.checked;
+      root.querySelectorAll(`[data-tr-action="${id}"]`).forEach((btn) => {
+        btn.disabled = shouldDisable;
+      });
+    };
+  });
+
+  root.querySelectorAll("[data-tr-action]").forEach((btn) => {
+    btn.onclick = () => applyTechnicianAction(btn.dataset.trAction);
+  });
+}
+
 function applySavedField(agentId, saveKey) {
   const draft = getOrCreateDraft(agentId);
   if (!draft) return;
@@ -588,7 +1107,7 @@ function applySavedField(agentId, saveKey) {
   const applyParam = (key) => updateAgentConfig(agentId, `params.${key}`, draft.params[key], false);
 
   if (saveKey === "agentConfigPanel") {
-    ["name", "role", "triggerCondition", "assignedTask", "priorityLevel", "status", "escalationRule"].forEach((field) =>
+    ["icon", "stage", "name", "role", "triggerCondition", "assignedTask", "priorityLevel", "status", "escalationRule"].forEach((field) =>
       applySimple(field)
     );
   } else if (saveKey === "permissionScopePanel") {
@@ -655,7 +1174,15 @@ function renderAgentBuilder() {
 
   const fields = byId("builder-agent-config-fields");
   if (fields) {
+    const iconSelectValue = WORKFLOW_ICON_OPTIONS.includes(draft.icon) ? draft.icon : WORKFLOW_ICON_OPTIONS[0];
+    const iconOptionsHtml = WORKFLOW_ICON_OPTIONS.map(
+      (ic) => `<option value="${escapeHtml(ic)}" ${iconSelectValue === ic ? "selected" : ""}>${escapeHtml(ic)}</option>`
+    ).join("");
     fields.innerHTML = `<div class="builder-form-grid">
+      <div><label class="field-lbl">Workflow icon</label>
+          <select id="bcf-icon">${iconOptionsHtml}</select>
+        </div>
+      <div><label class="field-lbl">Stage label</label><input type="text" id="bcf-stage" value="${escapeHtml(draft.stage)}" /></div>
       <div><label class="field-lbl">Agent name</label><input type="text" id="bcf-name" value="${escapeHtml(draft.name)}" /></div>
       <div><label class="field-lbl">Role</label><input type="text" id="bcf-role" value="${escapeHtml(draft.role)}" /></div>
       <div><label class="field-lbl">Trigger condition</label><input type="text" id="bcf-trigger" value="${escapeHtml(draft.triggerCondition)}" /></div>
@@ -674,6 +1201,14 @@ function renderAgentBuilder() {
       setDirty(agentId, "agentConfigPanel", true);
       refreshBuilderSaveButtons(agentId);
     };
+    byId("bcf-icon").addEventListener("change", (e) => {
+      draft.icon = e.target.value;
+      markConfigDirty();
+    });
+    byId("bcf-stage").addEventListener("input", (e) => {
+      draft.stage = e.target.value;
+      markConfigDirty();
+    });
     byId("bcf-name").addEventListener("input", (e) => {
       draft.name = e.target.value;
       markConfigDirty();
@@ -780,13 +1315,14 @@ function renderAgentBuilder() {
   }
 
   const builderRoot = byId("agents-subview-builder");
-  if (builderRoot) {
-    builderRoot.querySelectorAll(".save-field-btn[data-save-key]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        if (btn.disabled) return;
-        applySavedField(agentId, btn.dataset.saveKey);
-        refreshBuilderSaveButtons(agentId);
-      });
+  if (builderRoot && builderRoot.dataset.nfSaveDelegation !== "1") {
+    builderRoot.dataset.nfSaveDelegation = "1";
+    builderRoot.addEventListener("click", (e) => {
+      const btn = e.target.closest(".save-field-btn[data-save-key]");
+      if (!btn || btn.disabled) return;
+      const aid = state.selectedAgentId;
+      applySavedField(aid, btn.dataset.saveKey);
+      refreshBuilderSaveButtons(aid);
     });
   }
   refreshBuilderSaveButtons(agentId);
@@ -1164,6 +1700,10 @@ window.switchAgentSubView = switchAgentSubView;
 window.selectAgent = selectAgent;
 window.updateAgentConfig = updateAgentConfig;
 window.toggleWorkflowExpand = toggleWorkflowExpand;
+window.applyTechnicianAction = applyTechnicianAction;
+window.createAgentFromRecommendation = createAgentFromRecommendation;
+window.updateAgentFromRecommendation = updateAgentFromRecommendation;
+window.setTechnicianReviewed = setTechnicianReviewed;
 
 setInterval(updateClock, 1000);
 updateClock();

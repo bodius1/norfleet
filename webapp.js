@@ -3,6 +3,8 @@ const state = {
   fleets: [],
   selectedRobotIds: new Set(),
   selectedFleetId: null,
+  enabledKpis: new Set(["Throughput", "Cycle Time"]),
+  latestSeries: {},
   charts: {},
   stream: null
 };
@@ -15,6 +17,10 @@ function switchView(id, tabEl) {
   const view = byId(`view-${id}`);
   if (view) view.classList.add("active");
   if (tabEl) tabEl.classList.add("active");
+  if (id === "agents") {
+    renderAgentsView();
+    return;
+  }
   if (id === "monitor") {
     if (!state.fleets.length) {
       showToast("⚠", "Create a fleet in Fleet Builder first.");
@@ -23,6 +29,103 @@ function switchView(id, tabEl) {
     if (!state.selectedFleetId) state.selectedFleetId = state.fleets[0].id;
     syncFleetDropdowns();
     loadMetricsAndStream().catch((err) => showToast("⚠", err.message));
+  }
+}
+
+function renderAgentsView() {
+  const agents = [
+    {
+      name: "Pre-Shift Monitor",
+      role: "Overnight health & telemetry sweep",
+      status: "active",
+      task: "Scanning overnight robot health",
+      failures: "None (2 advisory warnings)"
+    },
+    {
+      name: "Root Cause Agent",
+      role: "Failure clustering & hypothesis ranking",
+      status: "active",
+      task: "Analyzing repeated failures",
+      failures: "3 correlated fault signatures"
+    },
+    {
+      name: "Maintenance Planner",
+      role: "Checklist & parts intent generation",
+      status: "active",
+      task: "Generating repair checklist",
+      failures: "0 blocking"
+    },
+    {
+      name: "Technician Dispatch",
+      role: "Work order routing & SLA watch",
+      status: "idle",
+      task: "Waiting for technician assignment",
+      failures: "—"
+    },
+    {
+      name: "Feedback Loop",
+      role: "Post-fix validation & model refresh",
+      status: "active",
+      task: "Learning from completed fixes",
+      failures: "1 open verification"
+    }
+  ];
+
+  const metrics = {
+    activeAgents: 4,
+    failuresDetected: 7,
+    suggestedFixes: 12,
+    resolvedIssues: 28
+  };
+
+  const takeaways = [
+    { text: "Inspect lidar obstruction alerts on R-002 in Zone B", priority: "High — safety adjacent" },
+    { text: "Check charging dock alignment for R-004", priority: "Medium — uptime" },
+    { text: "Re-test outbound route for R-001 after map sync", priority: "Medium — navigation" },
+    { text: "Review repeated pick failures at Sort Cell 3", priority: "High — throughput" }
+  ];
+
+  const cardsEl = byId("agents-status-cards");
+  if (cardsEl) {
+    cardsEl.innerHTML = agents
+      .map(
+        (a) => `
+      <div class="agent-card">
+        <div class="agent-card-head">
+          <div class="agent-card-name">${a.name}</div>
+          <span class="agent-status-pill ${a.status}">${a.status}</span>
+        </div>
+        <div class="agent-field-lbl">Role</div>
+        <div class="agent-field-val">${a.role}</div>
+        <div class="agent-field-lbl">Assigned task</div>
+        <div class="agent-field-val">${a.task}</div>
+        <div class="agent-field-lbl">Encountered failures</div>
+        <div class="agent-field-val">${a.failures}</div>
+      </div>`
+      )
+      .join("");
+  }
+
+  const mActive = byId("agents-m-active");
+  const mFail = byId("agents-m-failures");
+  const mFix = byId("agents-m-fixes");
+  const mRes = byId("agents-m-resolved");
+  if (mActive) mActive.textContent = String(metrics.activeAgents);
+  if (mFail) mFail.textContent = String(metrics.failuresDetected);
+  if (mFix) mFix.textContent = String(metrics.suggestedFixes);
+  if (mRes) mRes.textContent = String(metrics.resolvedIssues);
+
+  const listEl = byId("agents-takeaway-list");
+  if (listEl) {
+    listEl.innerHTML = takeaways
+      .map(
+        (t) => `
+      <li>
+        ${t.text}
+        <div class="takeaway-priority">${t.priority}</div>
+      </li>`
+      )
+      .join("");
   }
 }
 
@@ -139,12 +242,16 @@ function renderKpis(kpis) {
   kpiList.innerHTML = "";
   if (!kpis || kpis.length === 0) {
     kpiList.innerHTML = '<span class="muted">No KPIs yet — run AI detection for the selected fleet.</span>';
+    clearCharts();
+    renderChartsEmptyState();
     return;
   }
   kpis.forEach((kpi) => {
-    const tag = document.createElement("div");
-    tag.className = "kpi-tag";
+    const tag = document.createElement("button");
+    tag.type = "button";
+    tag.className = `kpi-tag ${state.enabledKpis.has(kpi) ? "active" : "disabled"}`;
     tag.textContent = kpi;
+    tag.onclick = () => toggleKpi(kpi);
     kpiList.appendChild(tag);
   });
 }
@@ -196,8 +303,47 @@ function upsertChart(kpi, values) {
 }
 
 function syncCharts(series) {
-  if (!series) return;
-  Object.entries(series).forEach(([kpi, values]) => upsertChart(kpi, values));
+  state.latestSeries = series || {};
+  renderEnabledCharts();
+}
+
+function clearCharts() {
+  Object.values(state.charts).forEach((chart) => chart.destroy());
+  state.charts = {};
+  const chartsWrap = byId("charts");
+  if (chartsWrap) chartsWrap.innerHTML = "";
+}
+
+function renderChartsEmptyState() {
+  const chartsWrap = byId("charts");
+  if (!chartsWrap) return;
+  chartsWrap.innerHTML =
+    '<div class="chart-card" style="grid-column: 1 / -1; display:flex; align-items:center; justify-content:center;"><div class="chart-title" style="margin:0; text-transform:none; letter-spacing:0; color: var(--text2);">Select KPIs above to display live charts.</div></div>';
+}
+
+function renderEnabledCharts() {
+  const series = state.latestSeries || {};
+  const enabledEntries = Object.entries(series).filter(([kpi]) => state.enabledKpis.has(kpi));
+
+  clearCharts();
+
+  if (enabledEntries.length === 0) {
+    renderChartsEmptyState();
+    return;
+  }
+
+  enabledEntries.forEach(([kpi, values]) => upsertChart(kpi, values));
+}
+
+function toggleKpi(kpi) {
+  if (state.enabledKpis.has(kpi)) state.enabledKpis.delete(kpi);
+  else state.enabledKpis.add(kpi);
+
+  const currentKpis = byId("kpi-list")
+    ? Array.from(byId("kpi-list").querySelectorAll(".kpi-tag")).map((el) => el.textContent)
+    : [];
+  renderKpis(currentKpis);
+  renderEnabledCharts();
 }
 
 function updateSummary(summary) {

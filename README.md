@@ -2,6 +2,17 @@
 
 Norfleet is a centralized KPI tracking platform for industrial robot fleets in warehouse environments.
 
+## May 4, 2026 Updates
+
+Main Changes:
+- Added AI Agents tab with an Agentic AI Builder sub-view.
+- Added n8n-style workflow canvas for maintenance agents.
+- Added editable agent settings, robot permissions, and task parameters.
+- Added technician takeaway, repair actions, and AI log suggestions.
+- Synced Builder changes with the AI Agents Overview through shared mock state.
+- Added expandable workflow views in Builder and Overview.
+- Improved checkbox styling, KPI chart toggles, spacing, and readability.
+
 ## What is now real
 
 - Live backend telemetry simulation for connected robots

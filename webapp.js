@@ -6,10 +6,249 @@ const state = {
   enabledKpis: new Set(["Throughput", "Cycle Time"]),
   latestSeries: {},
   charts: {},
-  stream: null
+  stream: null,
+  agentSubView: "overview",
+  selectedAgentId: "pre-shift-monitor",
+  agentBuilderConfig: null,
+  builderExpanded: false,
+  overviewExpanded: false,
+  agentDraftByAgent: {},
+  dirtyFieldsByAgent: {}
 };
 
+const MOCK_ROBOT_REGISTRY = [
+  { id: "R-001", label: "Induction Alpha" },
+  { id: "R-002", label: "Aisle Runner 12" },
+  { id: "R-003", label: "Sort Cell 3" },
+  { id: "R-004", label: "Outbound Cart" }
+];
+
+const BUILDER_PERMISSION_META = [
+  { key: "readLogs", label: "Read logs" },
+  { key: "createTicket", label: "Create technician ticket" },
+  { key: "recommendRepair", label: "Recommend repair" },
+  { key: "requestApproval", label: "Request human approval" },
+  { key: "updateHistory", label: "Update maintenance history" }
+];
+
+const BUILDER_AI_SUGGESTIONS = [
+  "Add a Charging Dock Agent because R-004 has repeated charging alignment issues.",
+  "Increase lidar obstruction sensitivity for R-002 in Zone B.",
+  "Add a Route Congestion Agent for repeated traffic delays near Sort Cell 3.",
+  "Lower auto-ticket confidence threshold during peak shift windows."
+];
+
 const byId = (id) => document.getElementById(id);
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function createDefaultAgentBuilderConfig() {
+  return {
+    workflowOrder: [
+      "pre-shift-monitor",
+      "root-cause",
+      "maintenance-planner",
+      "technician-dispatch",
+      "feedback-loop"
+    ],
+    dashboardMetrics: {
+      failuresDetected: 7,
+      suggestedFixes: 12,
+      resolvedIssues: 28
+    },
+    agents: [
+      {
+        id: "pre-shift-monitor",
+        icon: "⬡",
+        stage: "ingress",
+        name: "Pre-Shift Monitor",
+        role: "Overnight health & telemetry sweep",
+        triggerCondition: "Daily 05:30 site local, fleet online",
+        assignedTask: "Scanning overnight robot health",
+        priorityLevel: "P1",
+        escalationRule: "Notify fleet lead if any robot reports critical fault",
+        status: "active",
+        failures: "None (2 advisory warnings)",
+        robots: { "R-001": true, "R-002": true, "R-003": true, "R-004": true },
+        permissions: {
+          readLogs: true,
+          createTicket: false,
+          recommendRepair: true,
+          requestApproval: false,
+          updateHistory: true
+        },
+        params: {
+          failureThreshold: 3,
+          checkFrequency: "Every 15 minutes",
+          runSchedule: "05:30 site local, Mon–Sat",
+          confidenceRequired: 0.82,
+          autoCreateTicket: true,
+          requireTechnicianApproval: false
+        }
+      },
+      {
+        id: "root-cause",
+        icon: "◆",
+        stage: "analyze",
+        name: "Root Cause Agent",
+        role: "Failure clustering & hypothesis ranking",
+        triggerCondition: "≥3 similar faults within 2h window",
+        assignedTask: "Analyzing repeated failures",
+        priorityLevel: "P1",
+        escalationRule: "Escalate to reliability engineer after 5 hypotheses",
+        status: "active",
+        failures: "3 correlated fault signatures",
+        robots: { "R-001": true, "R-002": true, "R-003": true, "R-004": false },
+        permissions: {
+          readLogs: true,
+          createTicket: true,
+          recommendRepair: true,
+          requestApproval: true,
+          updateHistory: false
+        },
+        params: {
+          failureThreshold: 5,
+          checkFrequency: "On incident",
+          runSchedule: "24/7 on trigger",
+          confidenceRequired: 0.88,
+          autoCreateTicket: false,
+          requireTechnicianApproval: true
+        }
+      },
+      {
+        id: "maintenance-planner",
+        icon: "▣",
+        stage: "plan",
+        name: "Maintenance Planner",
+        role: "Checklist & parts intent generation",
+        triggerCondition: "Root cause agent publishes ranked hypothesis",
+        assignedTask: "Generating repair checklist",
+        priorityLevel: "P2",
+        escalationRule: "Hand off to dispatch if parts unavailable",
+        status: "active",
+        failures: "0 blocking",
+        robots: { "R-001": true, "R-002": false, "R-003": true, "R-004": true },
+        permissions: {
+          readLogs: true,
+          createTicket: true,
+          recommendRepair: true,
+          requestApproval: false,
+          updateHistory: true
+        },
+        params: {
+          failureThreshold: 2,
+          checkFrequency: "Hourly while plan open",
+          runSchedule: "Business hours + on-call",
+          confidenceRequired: 0.85,
+          autoCreateTicket: true,
+          requireTechnicianApproval: false
+        }
+      },
+      {
+        id: "technician-dispatch",
+        icon: "⬢",
+        stage: "assign",
+        name: "Technician Dispatch",
+        role: "Work order routing & SLA watch",
+        triggerCondition: "Maintenance plan approved or SLA breach",
+        assignedTask: "Waiting for technician assignment",
+        priorityLevel: "P2",
+        escalationRule: "Page on-call after 30m no pickup",
+        status: "idle",
+        failures: "—",
+        robots: { "R-001": false, "R-002": true, "R-003": true, "R-004": true },
+        permissions: {
+          readLogs: true,
+          createTicket: true,
+          recommendRepair: false,
+          requestApproval: true,
+          updateHistory: true
+        },
+        params: {
+          failureThreshold: 1,
+          checkFrequency: "Every 5 minutes",
+          runSchedule: "24/7",
+          confidenceRequired: 0.75,
+          autoCreateTicket: true,
+          requireTechnicianApproval: true
+        }
+      },
+      {
+        id: "feedback-loop",
+        icon: "↻",
+        stage: "learn",
+        name: "Feedback Loop",
+        role: "Post-fix validation & model refresh",
+        triggerCondition: "Work order closed with technician notes",
+        assignedTask: "Learning from completed fixes",
+        priorityLevel: "P3",
+        escalationRule: "Queue model retrain weekly",
+        status: "active",
+        failures: "1 open verification",
+        robots: { "R-001": true, "R-002": true, "R-003": true, "R-004": true },
+        permissions: {
+          readLogs: true,
+          createTicket: false,
+          recommendRepair: true,
+          requestApproval: false,
+          updateHistory: true
+        },
+        params: {
+          failureThreshold: 4,
+          checkFrequency: "Daily digest",
+          runSchedule: "02:00 site local",
+          confidenceRequired: 0.9,
+          autoCreateTicket: false,
+          requireTechnicianApproval: false
+        }
+      }
+    ]
+  };
+}
+
+function ensureAgentBuilderConfig() {
+  if (!state.agentBuilderConfig) {
+    state.agentBuilderConfig = createDefaultAgentBuilderConfig();
+  }
+}
+
+function getAgent(agentId) {
+  ensureAgentBuilderConfig();
+  return state.agentBuilderConfig.agents.find((a) => a.id === agentId) || null;
+}
+
+function getOrCreateDraft(agentId) {
+  const agent = getAgent(agentId);
+  if (!agent) return null;
+  if (!state.agentDraftByAgent[agentId]) {
+    state.agentDraftByAgent[agentId] = JSON.parse(JSON.stringify(agent));
+  }
+  if (!state.dirtyFieldsByAgent[agentId]) {
+    state.dirtyFieldsByAgent[agentId] = new Set();
+  }
+  return state.agentDraftByAgent[agentId];
+}
+
+function getDirtySet(agentId) {
+  if (!state.dirtyFieldsByAgent[agentId]) state.dirtyFieldsByAgent[agentId] = new Set();
+  return state.dirtyFieldsByAgent[agentId];
+}
+
+function isDirty(agentId, key) {
+  return getDirtySet(agentId).has(key);
+}
+
+function setDirty(agentId, key, dirty) {
+  const set = getDirtySet(agentId);
+  if (dirty) set.add(key);
+  else set.delete(key);
+}
 
 function switchView(id, tabEl) {
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
@@ -32,100 +271,556 @@ function switchView(id, tabEl) {
   }
 }
 
-function renderAgentsView() {
-  const agents = [
-    {
-      name: "Pre-Shift Monitor",
-      role: "Overnight health & telemetry sweep",
-      status: "active",
-      task: "Scanning overnight robot health",
-      failures: "None (2 advisory warnings)"
-    },
-    {
-      name: "Root Cause Agent",
-      role: "Failure clustering & hypothesis ranking",
-      status: "active",
-      task: "Analyzing repeated failures",
-      failures: "3 correlated fault signatures"
-    },
-    {
-      name: "Maintenance Planner",
-      role: "Checklist & parts intent generation",
-      status: "active",
-      task: "Generating repair checklist",
-      failures: "0 blocking"
-    },
-    {
-      name: "Technician Dispatch",
-      role: "Work order routing & SLA watch",
-      status: "idle",
-      task: "Waiting for technician assignment",
-      failures: "—"
-    },
-    {
-      name: "Feedback Loop",
-      role: "Post-fix validation & model refresh",
-      status: "active",
-      task: "Learning from completed fixes",
-      failures: "1 open verification"
-    }
-  ];
+function switchAgentSubView(subview) {
+  state.agentSubView = subview;
+  renderAgentsView();
+}
 
-  const metrics = {
-    activeAgents: 4,
-    failuresDetected: 7,
-    suggestedFixes: 12,
-    resolvedIssues: 28
-  };
+function toggleWorkflowExpand(target) {
+  if (target === "builder") state.builderExpanded = !state.builderExpanded;
+  if (target === "overview") state.overviewExpanded = !state.overviewExpanded;
+  renderAgentsView();
+}
 
-  const takeaways = [
-    { text: "Inspect lidar obstruction alerts on R-002 in Zone B", priority: "High — safety adjacent" },
-    { text: "Check charging dock alignment for R-004", priority: "Medium — uptime" },
-    { text: "Re-test outbound route for R-001 after map sync", priority: "Medium — navigation" },
-    { text: "Review repeated pick failures at Sort Cell 3", priority: "High — throughput" }
-  ];
+function selectAgent(agentId) {
+  if (!getAgent(agentId)) return;
+  state.selectedAgentId = agentId;
+  renderAgentBuilder();
+}
 
-  const cardsEl = byId("agents-status-cards");
-  if (cardsEl) {
-    cardsEl.innerHTML = agents
-      .map(
-        (a) => `
-      <div class="agent-card">
-        <div class="agent-card-head">
-          <div class="agent-card-name">${a.name}</div>
-          <span class="agent-status-pill ${a.status}">${a.status}</span>
-        </div>
-        <div class="agent-field-lbl">Role</div>
-        <div class="agent-field-val">${a.role}</div>
-        <div class="agent-field-lbl">Assigned task</div>
-        <div class="agent-field-val">${a.task}</div>
-        <div class="agent-field-lbl">Encountered failures</div>
-        <div class="agent-field-val">${a.failures}</div>
-      </div>`
-      )
-      .join("");
+function updateAgentConfig(agentId, field, value, shouldRefresh = true) {
+  const agent = getAgent(agentId);
+  if (!agent) return;
+  if (field.startsWith("robots.")) {
+    const rid = field.slice(7);
+    agent.robots[rid] = value;
+  } else if (field.startsWith("permissions.")) {
+    const key = field.slice(12);
+    agent.permissions[key] = value;
+  } else if (field.startsWith("params.")) {
+    const key = field.slice(7);
+    if (key === "failureThreshold") agent.params[key] = Number(value) || 0;
+    else if (key === "confidenceRequired") agent.params[key] = Number(value);
+    else if (key === "autoCreateTicket" || key === "requireTechnicianApproval") agent.params[key] = Boolean(value);
+    else agent.params[key] = value;
+  } else {
+    agent[field] = value;
+  }
+  if (shouldRefresh) refreshAgentsSharedUI();
+}
+
+function refreshAgentsSharedUI() {
+  ensureAgentBuilderConfig();
+  renderOverviewWorkflow();
+  renderAgentStatusCardsFromConfig();
+  updateAgentMetricsFromConfig();
+  renderTechnicianTakeaways();
+  syncBuilderWorkflowSelection();
+}
+
+let builderConnectorResizeObs = null;
+let layoutBuilderConnectorsRaf = null;
+let builderConnectorRetries = 0;
+
+function scheduleLayoutBuilderConnectors() {
+  if (layoutBuilderConnectorsRaf) cancelAnimationFrame(layoutBuilderConnectorsRaf);
+  layoutBuilderConnectorsRaf = requestAnimationFrame(() => {
+    layoutBuilderConnectorsRaf = null;
+    layoutBuilderConnectors();
+  });
+}
+
+function ensureBuilderConnectorObserver() {
+  const canvas = document.querySelector(".workflow-canvas--builder");
+  if (!canvas || builderConnectorResizeObs) return;
+  builderConnectorResizeObs = new ResizeObserver(() => scheduleLayoutBuilderConnectors());
+  builderConnectorResizeObs.observe(canvas);
+}
+
+/** Reusable path: right-center of A to left-center of B; straight if same row left-to-right, else orthogonal elbow. */
+function buildWorkflowConnectorPath(sx, sy, ex, ey) {
+  const rowTol = 16;
+  const dy = Math.abs(sy - ey);
+  const straight = dy < rowTol && ex > sx;
+  if (straight) {
+    return `M ${sx} ${sy} L ${ex} ${ey}`;
+  }
+  const curve = Math.max(22, Math.min(56, Math.abs(ex - sx) * 0.35));
+  const c1x = sx + curve;
+  const c2x = ex - curve;
+  return `M ${sx} ${sy} C ${c1x} ${sy}, ${c2x} ${ey}, ${ex} ${ey}`;
+}
+
+function layoutBuilderConnectors() {
+  const svg = byId("builder-connectors-svg");
+  const canvas = document.querySelector(".workflow-canvas--builder");
+  const track = byId("agents-builder-workflow");
+  if (!svg || !canvas || !track || state.agentSubView !== "builder") return;
+
+  const nodes = Array.from(track.querySelectorAll(".builder-workflow-node"));
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  if (w < 2 || h < 2 || nodes.length < 2) return;
+
+  const canvasRect = canvas.getBoundingClientRect();
+  svg.setAttribute("width", String(w));
+  svg.setAttribute("height", String(h));
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+
+  const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+  defs.innerHTML = `
+    <linearGradient id="builder-conn-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#1fd9ff"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <marker id="builder-flow-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L7,3.5 L0,7 z" fill="rgba(124,58,237,0.9)"/>
+    </marker>
+    <filter id="builder-conn-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="1.6" flood-color="#00e5ff" flood-opacity="0.45"/>
+    </filter>`;
+  svg.innerHTML = "";
+  svg.appendChild(defs);
+
+  function toLocal(el) {
+    const r = el.getBoundingClientRect();
+    return {
+      left: r.left - canvasRect.left,
+      right: r.right - canvasRect.left,
+      top: r.top - canvasRect.top,
+      bottom: r.bottom - canvasRect.top,
+      cy: r.top - canvasRect.top + r.height / 2
+    };
   }
 
+  let drawn = 0;
+  for (let i = 0; i < nodes.length - 1; i++) {
+    const a = toLocal(nodes[i]);
+    const b = toLocal(nodes[i + 1]);
+    const sx = a.right;
+    const sy = a.cy;
+    const ex = b.left;
+    const ey = b.cy;
+    const d = buildWorkflowConnectorPath(sx, sy, ex, ey);
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", "url(#builder-conn-grad)");
+    path.setAttribute("stroke-width", "2.6");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    path.setAttribute("filter", "url(#builder-conn-glow)");
+    path.setAttribute("marker-end", "url(#builder-flow-arrow)");
+    svg.appendChild(path);
+    drawn += 1;
+  }
+
+  const expected = nodes.length - 1;
+  if (drawn < expected && builderConnectorRetries < 4) {
+    builderConnectorRetries += 1;
+    setTimeout(() => scheduleLayoutBuilderConnectors(), 35);
+  } else {
+    builderConnectorRetries = 0;
+  }
+}
+
+function buildOverviewTakeawaysFromConfig() {
+  ensureAgentBuilderConfig();
+  const agents = state.agentBuilderConfig.agents;
+  const get = (id) => agents.find((a) => a.id === id);
+  const monitor = get("pre-shift-monitor");
+  const root = get("root-cause");
+  const planner = get("maintenance-planner");
+  const dispatch = get("technician-dispatch");
+
+  const readScope = Object.entries(root?.robots || {})
+    .filter(([, enabled]) => Boolean(enabled))
+    .map(([id]) => id)
+    .slice(0, 2)
+    .join(", ");
+  const scopeText = readScope ? `${readScope}` : "priority robots";
+  const conf = planner?.params?.confidenceRequired ?? 0.85;
+  const autoTicket = dispatch?.params?.autoCreateTicket;
+  const approval = dispatch?.params?.requireTechnicianApproval;
+  const threshold = root?.params?.failureThreshold ?? 3;
+
+  return [
+    {
+      text: `${planner?.name || "Maintenance Planner"}: prioritize ${planner?.assignedTask?.toLowerCase?.() || "repair checklist generation"} for ${scopeText}.`,
+      priority: "High — execution"
+    },
+    {
+      text: `${root?.name || "Root Cause Agent"} trigger threshold is ${threshold}; monitor repeated faults before escalation.`,
+      priority: "High — reliability"
+    },
+    {
+      text: `${dispatch?.name || "Technician Dispatch"} is ${dispatch?.status || "idle"}; ${autoTicket ? "auto-ticketing enabled" : "manual ticket creation"}${approval ? " with technician approval required" : " with autonomous dispatch mode"}.`,
+      priority: "Medium — staffing"
+    },
+    {
+      text: `${monitor?.name || "Pre-Shift Monitor"} confidence gate set near ${(conf * 100).toFixed(0)}%; tune during peak shift windows if needed.`,
+      priority: "Medium — calibration"
+    }
+  ];
+}
+
+function renderTechnicianTakeaways() {
+  const listEl = byId("agents-takeaway-list");
+  if (!listEl) return;
+  const takeaways = buildOverviewTakeawaysFromConfig();
+  listEl.innerHTML = takeaways
+    .map(
+      (t) => `
+      <li>
+        ${escapeHtml(t.text)}
+        <div class="takeaway-priority">${escapeHtml(t.priority)}</div>
+      </li>`
+    )
+    .join("");
+}
+
+function renderOverviewWorkflow() {
+  renderWorkflowDiagram("agents-overview-workflow", { interactive: false });
+}
+
+function renderWorkflowDiagram(wrapId, options = {}) {
+  const { interactive = false } = options;
+  const wrap = byId(wrapId);
+  if (!wrap) return;
+  const { workflowOrder } = state.agentBuilderConfig;
+  wrap.innerHTML = "";
+  workflowOrder.forEach((id, idx) => {
+    const ag = getAgent(id);
+    if (!ag) return;
+    const node = document.createElement("div");
+    node.className = interactive
+      ? `workflow-node builder-workflow-node${state.selectedAgentId === id ? " selected" : ""}`
+      : "workflow-node";
+    if (interactive) {
+      node.dataset.agentId = id;
+      node.setAttribute("role", "button");
+      node.tabIndex = 0;
+      node.onclick = () => selectAgent(id);
+      node.onkeydown = (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          selectAgent(id);
+        }
+      };
+    }
+    node.innerHTML = `<div class="workflow-node-icon">${ag.icon}</div><div class="workflow-node-title" ${
+      interactive ? `id="builder-wf-title-${id}"` : ""
+    }>${escapeHtml(ag.name)}</div><div class="workflow-node-meta">${escapeHtml(ag.stage)}</div>`;
+    wrap.appendChild(node);
+    if (idx < workflowOrder.length - 1) {
+      const c = document.createElement("div");
+      c.className = "workflow-connector";
+      c.setAttribute("aria-hidden", "true");
+      wrap.appendChild(c);
+    }
+  });
+}
+
+function renderBuilderWorkflowTrack() {
+  const wrap = byId("agents-builder-workflow");
+  if (!wrap) return;
+  wrap.classList.remove("workflow-size-large", "workflow-size-medium", "workflow-size-compact");
+  renderWorkflowDiagram("agents-builder-workflow", { interactive: true });
+}
+
+function syncBuilderWorkflowSelection() {
+  if (state.agentSubView !== "builder") return;
+  const wrap = byId("agents-builder-workflow");
+  if (!wrap) return;
+  state.agentBuilderConfig.workflowOrder.forEach((id) => {
+    const ag = getAgent(id);
+    const titleEl = byId(`builder-wf-title-${id}`);
+    if (titleEl && ag) titleEl.textContent = ag.name;
+  });
+  wrap.querySelectorAll(".builder-workflow-node").forEach((btn) => {
+    btn.classList.toggle("selected", btn.dataset.agentId === state.selectedAgentId);
+  });
+}
+
+function renderAgentStatusCardsFromConfig() {
+  const cardsEl = byId("agents-status-cards");
+  if (!cardsEl) return;
+  const { workflowOrder } = state.agentBuilderConfig;
+  const html = workflowOrder
+    .map((id) => {
+      const a = getAgent(id);
+      if (!a) return "";
+      return `<div class="agent-card">
+        <div class="agent-card-head">
+          <div class="agent-card-name">${escapeHtml(a.name)}</div>
+          <span class="agent-status-pill ${escapeHtml(a.status)}">${escapeHtml(a.status)}</span>
+        </div>
+        <div class="agent-field-lbl">Role</div>
+        <div class="agent-field-val">${escapeHtml(a.role)}</div>
+        <div class="agent-field-lbl">Assigned task</div>
+        <div class="agent-field-val">${escapeHtml(a.assignedTask)}</div>
+        <div class="agent-field-lbl">Encountered failures</div>
+        <div class="agent-field-val">${escapeHtml(a.failures)}</div>
+      </div>`;
+    })
+    .join("");
+  cardsEl.innerHTML = html;
+}
+
+function updateAgentMetricsFromConfig() {
+  const agents = state.agentBuilderConfig.agents;
+  const activeCount = agents.filter((a) => a.status === "active").length;
+  const dm = state.agentBuilderConfig.dashboardMetrics;
   const mActive = byId("agents-m-active");
   const mFail = byId("agents-m-failures");
   const mFix = byId("agents-m-fixes");
   const mRes = byId("agents-m-resolved");
-  if (mActive) mActive.textContent = String(metrics.activeAgents);
-  if (mFail) mFail.textContent = String(metrics.failuresDetected);
-  if (mFix) mFix.textContent = String(metrics.suggestedFixes);
-  if (mRes) mRes.textContent = String(metrics.resolvedIssues);
+  if (mActive) mActive.textContent = String(activeCount);
+  if (mFail) mFail.textContent = String(dm.failuresDetected);
+  if (mFix) mFix.textContent = String(dm.suggestedFixes);
+  if (mRes) mRes.textContent = String(dm.resolvedIssues);
+}
 
-  const listEl = byId("agents-takeaway-list");
-  if (listEl) {
-    listEl.innerHTML = takeaways
-      .map(
-        (t) => `
-      <li>
-        ${t.text}
-        <div class="takeaway-priority">${t.priority}</div>
-      </li>`
-      )
-      .join("");
+function applySavedField(agentId, saveKey) {
+  const draft = getOrCreateDraft(agentId);
+  if (!draft) return;
+  const applySimple = (field) => updateAgentConfig(agentId, field, draft[field], false);
+  const applyParam = (key) => updateAgentConfig(agentId, `params.${key}`, draft.params[key], false);
+
+  if (saveKey === "agentConfigPanel") {
+    ["name", "role", "triggerCondition", "assignedTask", "priorityLevel", "status", "escalationRule"].forEach((field) =>
+      applySimple(field)
+    );
+  } else if (saveKey === "permissionScopePanel") {
+    draft.robots = { ...draft.robots };
+    Object.entries(draft.robots).forEach(([rid, enabled]) => updateAgentConfig(agentId, `robots.${rid}`, Boolean(enabled), false));
+    draft.permissions = { ...draft.permissions };
+    Object.entries(draft.permissions).forEach(([perm, enabled]) =>
+      updateAgentConfig(agentId, `permissions.${perm}`, Boolean(enabled), false)
+    );
+  } else if (saveKey === "taskParamsPanel") {
+    ["failureThreshold", "checkFrequency", "runSchedule", "confidenceRequired", "autoCreateTicket", "requireTechnicianApproval"].forEach(
+      (key) => applyParam(key)
+    );
+  } else if (saveKey === "name") applySimple("name");
+  else if (saveKey === "role") applySimple("role");
+  else if (saveKey === "triggerCondition") applySimple("triggerCondition");
+  else if (saveKey === "assignedTask") applySimple("assignedTask");
+  else if (saveKey === "priorityLevel") applySimple("priorityLevel");
+  else if (saveKey === "status") applySimple("status");
+  else if (saveKey === "escalationRule") applySimple("escalationRule");
+  else if (saveKey === "robotsScope") {
+    draft.robots = { ...draft.robots };
+    Object.entries(draft.robots).forEach(([rid, enabled]) => updateAgentConfig(agentId, `robots.${rid}`, Boolean(enabled), false));
+  } else if (saveKey === "permissionsScope") {
+    draft.permissions = { ...draft.permissions };
+    Object.entries(draft.permissions).forEach(([perm, enabled]) =>
+      updateAgentConfig(agentId, `permissions.${perm}`, Boolean(enabled), false)
+    );
+  } else if (saveKey === "params.failureThreshold") applyParam("failureThreshold");
+  else if (saveKey === "params.checkFrequency") applyParam("checkFrequency");
+  else if (saveKey === "params.runSchedule") applyParam("runSchedule");
+  else if (saveKey === "params.confidenceRequired") applyParam("confidenceRequired");
+  else if (saveKey === "params.autoCreateTicket") applyParam("autoCreateTicket");
+  else if (saveKey === "params.requireTechnicianApproval") applyParam("requireTechnicianApproval");
+
+  setDirty(agentId, saveKey, false);
+  refreshAgentsSharedUI();
+}
+
+function refreshBuilderSaveButtons(agentId) {
+  const root = byId("agents-subview-builder");
+  if (!root) return;
+  root.querySelectorAll(".save-field-btn[data-save-key]").forEach((btn) => {
+    const key = btn.dataset.saveKey;
+    const dirty = isDirty(agentId, key);
+    btn.textContent = dirty ? "Save" : "Saved";
+    btn.disabled = !dirty;
+    btn.classList.toggle("saved", !dirty);
+  });
+}
+
+function renderAgentBuilder() {
+  ensureAgentBuilderConfig();
+  const agentId = state.selectedAgentId;
+  const draft = getOrCreateDraft(agentId);
+  if (!draft) return;
+
+  renderBuilderWorkflowTrack();
+
+  const saveButtonHtml = (key) =>
+    `<button type="button" class="save-field-btn ${isDirty(agentId, key) ? "" : "saved"}" data-save-key="${key}" ${
+      isDirty(agentId, key) ? "" : "disabled"
+    }>${isDirty(agentId, key) ? "Save" : "Saved"}</button>`;
+
+  const fields = byId("builder-agent-config-fields");
+  if (fields) {
+    fields.innerHTML = `<div class="builder-form-grid">
+      <div><label class="field-lbl">Agent name</label><input type="text" id="bcf-name" value="${escapeHtml(draft.name)}" /></div>
+      <div><label class="field-lbl">Role</label><input type="text" id="bcf-role" value="${escapeHtml(draft.role)}" /></div>
+      <div><label class="field-lbl">Trigger condition</label><input type="text" id="bcf-trigger" value="${escapeHtml(draft.triggerCondition)}" /></div>
+      <div><label class="field-lbl">Assigned task</label><input type="text" id="bcf-task" value="${escapeHtml(draft.assignedTask)}" /></div>
+      <div><label class="field-lbl">Priority level</label><input type="text" id="bcf-priority" value="${escapeHtml(draft.priorityLevel)}" /></div>
+      <div><label class="field-lbl">Status</label>
+          <select id="bcf-status">
+            <option value="active" ${draft.status === "active" ? "selected" : ""}>active</option>
+            <option value="idle" ${draft.status === "idle" ? "selected" : ""}>idle</option>
+          </select>
+        </div>
+      <div><label class="field-lbl">Escalation rule</label><input type="text" id="bcf-escalation" value="${escapeHtml(draft.escalationRule)}" /></div>
+    </div>`;
+
+    const markConfigDirty = () => {
+      setDirty(agentId, "agentConfigPanel", true);
+      refreshBuilderSaveButtons(agentId);
+    };
+    byId("bcf-name").addEventListener("input", (e) => {
+      draft.name = e.target.value;
+      markConfigDirty();
+    });
+    byId("bcf-role").addEventListener("input", (e) => {
+      draft.role = e.target.value;
+      markConfigDirty();
+    });
+    byId("bcf-trigger").addEventListener("input", (e) => {
+      draft.triggerCondition = e.target.value;
+      markConfigDirty();
+    });
+    byId("bcf-task").addEventListener("input", (e) => {
+      draft.assignedTask = e.target.value;
+      markConfigDirty();
+    });
+    byId("bcf-priority").addEventListener("input", (e) => {
+      draft.priorityLevel = e.target.value;
+      markConfigDirty();
+    });
+    byId("bcf-escalation").addEventListener("input", (e) => {
+      draft.escalationRule = e.target.value;
+      markConfigDirty();
+    });
+    byId("bcf-status").addEventListener("change", (e) => {
+      draft.status = e.target.value;
+      markConfigDirty();
+    });
+  }
+
+  const robotsEl = byId("builder-robot-permissions");
+  if (robotsEl) {
+    robotsEl.innerHTML = `<div class="field-lbl" style="margin-bottom:8px">Robots &amp; fleets scope</div>
+      <div class="builder-checkbox-grid">${MOCK_ROBOT_REGISTRY.map((r) => {
+        const checked = draft.robots[r.id];
+        return `<label class="builder-check-row nf-check-row"><span>${escapeHtml(r.id)} ${escapeHtml(r.label)}</span><input class="nf-checkbox" type="checkbox" data-robot-id="${r.id}" ${checked ? "checked" : ""} /></label>`;
+      }).join("")}</div>
+      <div class="field-lbl" style="margin:14px 0 8px">Permissions</div>
+      <div class="builder-checkbox-grid">${BUILDER_PERMISSION_META.map(
+        (meta) =>
+          `<label class="builder-check-row nf-check-row"><span>${escapeHtml(meta.label)}</span><input class="nf-checkbox" type="checkbox" data-perm-key="${meta.key}" ${draft.permissions[meta.key] ? "checked" : ""} /></label>`
+      ).join("")}</div>`;
+    robotsEl.querySelectorAll("[data-robot-id]").forEach((inp) => {
+      inp.addEventListener("change", () => {
+        draft.robots[inp.dataset.robotId] = inp.checked;
+        setDirty(agentId, "permissionScopePanel", true);
+        refreshBuilderSaveButtons(agentId);
+      });
+    });
+    robotsEl.querySelectorAll("[data-perm-key]").forEach((inp) => {
+      inp.addEventListener("change", () => {
+        draft.permissions[inp.dataset.permKey] = inp.checked;
+        setDirty(agentId, "permissionScopePanel", true);
+        refreshBuilderSaveButtons(agentId);
+      });
+    });
+  }
+
+  const p = draft.params;
+  const confOpts = [0.7, 0.75, 0.8, 0.82, 0.85, 0.88, 0.9, 0.95];
+  const paramsEl = byId("builder-task-params");
+  if (paramsEl) {
+    paramsEl.innerHTML = `<div class="builder-form-grid">
+      <div><label class="field-lbl">Failure threshold</label><input type="number" id="bcf-ft" min="0" step="1" value="${p.failureThreshold}" /></div>
+      <div><label class="field-lbl">Check frequency</label><input type="text" id="bcf-freq" value="${escapeHtml(p.checkFrequency)}" /></div>
+      <div><label class="field-lbl">Run schedule</label><input type="text" id="bcf-sched" value="${escapeHtml(p.runSchedule)}" /></div>
+      <div><label class="field-lbl">Confidence required before action</label>
+        <select id="bcf-conf">${confOpts.map((v) => `<option value="${v}" ${Math.abs(p.confidenceRequired - v) < 0.001 ? "selected" : ""}>${v}</option>`).join("")}</select>
+      </div>
+      <label class="builder-check-row nf-check-row"><span>Auto-create ticket</span><input class="nf-checkbox" type="checkbox" id="bcf-autotix" ${p.autoCreateTicket ? "checked" : ""} /></label>
+      <label class="builder-check-row nf-check-row"><span>Require technician approval</span><input class="nf-checkbox" type="checkbox" id="bcf-appr" ${p.requireTechnicianApproval ? "checked" : ""} /></label>
+    </div>`;
+
+    byId("bcf-ft").addEventListener("input", (e) => {
+      draft.params.failureThreshold = Number(e.target.value) || 0;
+      setDirty(agentId, "taskParamsPanel", true);
+      refreshBuilderSaveButtons(agentId);
+    });
+    byId("bcf-freq").addEventListener("input", (e) => {
+      draft.params.checkFrequency = e.target.value;
+      setDirty(agentId, "taskParamsPanel", true);
+      refreshBuilderSaveButtons(agentId);
+    });
+    byId("bcf-sched").addEventListener("input", (e) => {
+      draft.params.runSchedule = e.target.value;
+      setDirty(agentId, "taskParamsPanel", true);
+      refreshBuilderSaveButtons(agentId);
+    });
+    byId("bcf-conf").addEventListener("change", (e) => {
+      draft.params.confidenceRequired = Number(e.target.value);
+      setDirty(agentId, "taskParamsPanel", true);
+      refreshBuilderSaveButtons(agentId);
+    });
+    byId("bcf-autotix").addEventListener("change", (e) => {
+      draft.params.autoCreateTicket = e.target.checked;
+      setDirty(agentId, "taskParamsPanel", true);
+      refreshBuilderSaveButtons(agentId);
+    });
+    byId("bcf-appr").addEventListener("change", (e) => {
+      draft.params.requireTechnicianApproval = e.target.checked;
+      setDirty(agentId, "taskParamsPanel", true);
+      refreshBuilderSaveButtons(agentId);
+    });
+  }
+
+  const builderRoot = byId("agents-subview-builder");
+  if (builderRoot) {
+    builderRoot.querySelectorAll(".save-field-btn[data-save-key]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (btn.disabled) return;
+        applySavedField(agentId, btn.dataset.saveKey);
+        refreshBuilderSaveButtons(agentId);
+      });
+    });
+  }
+  refreshBuilderSaveButtons(agentId);
+
+  const sug = byId("builder-suggestions-list");
+  if (sug && sug.dataset.rendered !== "1") {
+    sug.innerHTML = BUILDER_AI_SUGGESTIONS.map((s) => `<li class="builder-suggestion-row">${escapeHtml(s)}</li>`).join("");
+    sug.dataset.rendered = "1";
+  }
+}
+
+function renderAgentsView() {
+  ensureAgentBuilderConfig();
+
+  document.querySelectorAll(".agents-subtab").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.agentsSub === state.agentSubView);
+  });
+  byId("agents-subview-overview")?.classList.toggle("active", state.agentSubView === "overview");
+  byId("agents-subview-builder")?.classList.toggle("active", state.agentSubView === "builder");
+
+  const overviewPanel = byId("overview-workflow-panel");
+  if (overviewPanel) overviewPanel.classList.toggle("expanded", state.overviewExpanded);
+  const overviewBtn = byId("overview-expand-btn");
+  if (overviewBtn) overviewBtn.textContent = state.overviewExpanded ? "Collapse" : "Expand";
+
+  const builderPanel = byId("builder-workflow-panel");
+  if (builderPanel) builderPanel.classList.toggle("expanded", state.builderExpanded);
+  const builderBtn = byId("builder-expand-btn");
+  if (builderBtn) builderBtn.textContent = state.builderExpanded ? "Collapse" : "Expand";
+
+  refreshAgentsSharedUI();
+
+  if (state.agentSubView === "builder") {
+    renderAgentBuilder();
   }
 }
 
@@ -216,10 +911,9 @@ function renderRobots() {
     robotsList.appendChild(row);
 
     const wrap = document.createElement("label");
-    wrap.className = "list-item";
-    wrap.style.cursor = "pointer";
+    wrap.className = "list-item fleet-select-row";
     const checked = state.selectedRobotIds.has(robot.id);
-    wrap.innerHTML = `<span>${robot.id} · ${robot.name}</span><input type="checkbox" ${checked ? "checked" : ""} />`;
+    wrap.innerHTML = `<span>${robot.id} · ${robot.name}</span><input class="nf-checkbox" type="checkbox" ${checked ? "checked" : ""} />`;
     wrap.querySelector("input").onchange = (e) => {
       if (e.target.checked) state.selectedRobotIds.add(robot.id);
       else state.selectedRobotIds.delete(robot.id);
@@ -466,6 +1160,10 @@ function bindEvents() {
 }
 
 window.switchView = switchView;
+window.switchAgentSubView = switchAgentSubView;
+window.selectAgent = selectAgent;
+window.updateAgentConfig = updateAgentConfig;
+window.toggleWorkflowExpand = toggleWorkflowExpand;
 
 setInterval(updateClock, 1000);
 updateClock();

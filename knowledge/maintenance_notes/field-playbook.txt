@@ -1,0 +1,11 @@
+Pick accuracy troubleshooting:
+- Compare SKU dimension profile with recent mis-pick logs.
+- Check end-effector jaw pressure and camera blur in sort cells.
+- Raise inspection frequency when pick accuracy drops below 92% for 3 windows.
+
+Route congestion troubleshooting:
+- Track dwell over 90 seconds at intersections.
+- Rebalance route priorities to reduce choke points.
+
+Battery health troubleshooting:
+- If battery health trend declines for 3 days, schedule charging cycle diagnostics.

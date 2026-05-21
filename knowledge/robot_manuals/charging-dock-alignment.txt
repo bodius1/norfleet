@@ -1,0 +1,4 @@
+Charging dock alignment guide:
+- Check dock marker wear and clean QR fiducials.
+- Validate approach angle offset under 5 degrees.
+- For repeated retries, inspect wheel slippage and floor markings.

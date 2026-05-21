@@ -7,6 +7,7 @@ const state = {
   latestSeries: {},
   charts: {},
   stream: null,
+  lastMetricsSnapshot: null,
   agentSubView: "overview",
   selectedAgentId: "pre-shift-monitor",
   agentBuilderConfig: null,
@@ -17,11 +18,28 @@ const state = {
   /** Review checkboxes + applied/sent status for Technician Report actions. */
   technicianReport: {
     reviewed: {},
-    actionStatus: {}
+    actionStatus: {},
+    generatedActions: null,
+    generatedSummary: null,
+    lastAnalysis: null
+  },
+  technicianFeedbackHistory: [],
+  agentChangeLog: [],
+  aiUsage: {
+    provider: "mock",
+    model: "mock-norfleet-v1",
+    estimatedTokens: 0,
+    costEstimate: "$0.0000",
+    callsThisSession: 0,
+    lastStatus: "Ready"
+  },
+  settings: {
+    ai: { provider: "mock", model: "mock-norfleet-v1", mockMode: true, hasApiKey: false },
+    data: { dataMode: "mock", kpiApiBaseUrl: "", robotApiBaseUrl: "", hasKpiApiKey: false }
   }
 };
 
-const MOCK_ROBOT_REGISTRY = [
+const SAMPLE_ROBOT_REGISTRY = [
   { id: "R-001", label: "Induction Alpha" },
   { id: "R-002", label: "Aisle Runner 12" },
   { id: "R-003", label: "Sort Cell 3" },
@@ -46,8 +64,8 @@ const BUILDER_AI_SUGGESTIONS = [
 /** Preset glyphs for workflow nodes (Agentic AI Builder). */
 const WORKFLOW_ICON_OPTIONS = ["⬡", "◆", "▣", "⬢", "↻"];
 
-/** KPI anomaly mock data (aligned with KPI Monitor naming). */
-const MOCK_KPI_ANOMALIES = [
+/** Sample KPI anomaly cards (aligned with KPI Monitor naming). */
+const SAMPLE_KPI_ANOMALIES = [
   {
     kpi: "Pick Accuracy",
     anomaly: "Below 92% for 3 consecutive 15m windows",
@@ -175,6 +193,289 @@ function escapeHtml(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/** Default chart header (x/y units) + rules for KPIs not in the catalog (e.g. AI-detected names). */
+const KPI_CHART_META_DEFAULT = {
+  chartHeaderUnits: "interval / value",
+  absMin: null,
+  absMax: null,
+  rollingBad: null,
+  rollingPct: 15,
+  rollingLen: 8,
+  checkVolatility: true
+};
+
+/**
+ * KPI Monitor: header shows (interval / y-units); anomaly thresholds below.
+ * rollingBad: compare latest point to mean of prior `rollingLen` points.
+ */
+const KPI_CHART_META = {
+  Throughput: {
+    chartHeaderUnits: "interval / tasks/h",
+    rollingBad: "below_avg_pct",
+    rollingPct: 15,
+    rollingLen: 8,
+    absMin: null,
+    absMax: null,
+    checkVolatility: true
+  },
+  "Cycle Time": {
+    chartHeaderUnits: "interval / min/task",
+    rollingBad: "above_avg_pct",
+    rollingPct: 15,
+    rollingLen: 8,
+    absMin: null,
+    absMax: null,
+    checkVolatility: true
+  },
+  Uptime: {
+    chartHeaderUnits: "interval / %",
+    absMin: 95,
+    absMax: null,
+    rollingBad: null,
+    checkVolatility: true
+  },
+  "Battery Health": {
+    chartHeaderUnits: "interval / %",
+    absMin: 80,
+    absMax: null,
+    rollingBad: null,
+    checkVolatility: true
+  },
+  "Pick Accuracy": {
+    chartHeaderUnits: "interval / %",
+    absMin: 97,
+    absMax: null,
+    rollingBad: null,
+    checkVolatility: true
+  },
+  "Traffic Delay": {
+    chartHeaderUnits: "interval / s",
+    rollingBad: "above_avg_pct",
+    rollingPct: 20,
+    rollingLen: 8,
+    absMin: null,
+    absMax: null,
+    checkVolatility: true
+  },
+  "Error Rate": {
+    chartHeaderUnits: "interval / %",
+    absMin: null,
+    absMax: 3,
+    rollingBad: null,
+    checkVolatility: true
+  },
+  "Travel Time": {
+    chartHeaderUnits: "interval / min/trip",
+    rollingBad: "above_avg_pct",
+    rollingPct: 15,
+    rollingLen: 8,
+    absMin: null,
+    absMax: null,
+    checkVolatility: true
+  },
+  "Task Completion": {
+    chartHeaderUnits: "interval / %",
+    absMin: 95,
+    absMax: null,
+    rollingBad: null,
+    checkVolatility: true
+  }
+};
+
+function getKpiChartMeta(kpiName) {
+  return KPI_CHART_META[kpiName] || KPI_CHART_META_DEFAULT;
+}
+
+function kpiSeriesMean(arr) {
+  if (!arr.length) return 0;
+  return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
+function kpiSeriesStdev(arr) {
+  if (arr.length < 2) return 0;
+  const m = kpiSeriesMean(arr);
+  return Math.sqrt(arr.reduce((s, x) => s + (x - m) ** 2, 0) / arr.length);
+}
+
+/**
+ * Live chart anomaly: absolute range, rolling spike/drop vs recent mean, or elevated short-window volatility.
+ */
+function detectKpiChartAnomaly(kpiName, values) {
+  const nums = (values || []).map(Number).filter((x) => !Number.isNaN(x));
+  const meta = getKpiChartMeta(kpiName);
+  let outOfRange = false;
+  let alert = false;
+  let volatile = false;
+
+  if (nums.length === 0) {
+    return { outOfRange: false, alert: false, volatile: false, badges: [], anomalous: false };
+  }
+
+  const current = nums[nums.length - 1];
+
+  if (meta.absMin != null && current < meta.absMin) outOfRange = true;
+  if (meta.absMax != null && current > meta.absMax) outOfRange = true;
+
+  const rw = meta.rollingLen || 8;
+  const pct = meta.rollingPct ?? 15;
+  if (meta.rollingBad && nums.length >= rw + 1) {
+    const past = nums.slice(-rw - 1, -1);
+    const rollAvg = kpiSeriesMean(past);
+    if (meta.rollingBad === "below_avg_pct" && rollAvg > 0 && current < rollAvg * (1 - pct / 100)) alert = true;
+    if (meta.rollingBad === "above_avg_pct" && rollAvg >= 0 && current > rollAvg * (1 + pct / 100)) alert = true;
+  }
+
+  if (meta.checkVolatility !== false && nums.length >= 8) {
+    const tail = nums.slice(-4);
+    const head = nums.slice(0, -4);
+    const stTail = kpiSeriesStdev(tail);
+    const stHead = kpiSeriesStdev(head);
+    const baseline = Math.max(Math.abs(kpiSeriesMean(nums)), 1e-6);
+    if (stHead < baseline * 0.015) {
+      if (stTail > baseline * 0.04) volatile = true;
+    } else if (stTail > 1.65 * stHead && stTail > baseline * 0.012) volatile = true;
+  }
+
+  const badges = [];
+  if (outOfRange) badges.push("Out of Range");
+  if (alert) badges.push("Alert");
+  if (volatile) badges.push("Volatile");
+  return { outOfRange, alert, volatile, badges, anomalous: badges.length > 0 };
+}
+
+function getNavTab(viewId) {
+  return document.querySelector(`.nav-tab[data-view="${viewId}"]`);
+}
+
+function estimateTokensFromObj(obj) {
+  const chars = JSON.stringify(obj || {}).length;
+  return Math.ceil(chars / 4);
+}
+
+function getSessionAdminToken() {
+  try {
+    return (localStorage.getItem("norfleet_admin_token") || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+/** UI label for provider enum (avoids implying a test double). */
+function displayAiProviderName(provider) {
+  const p = String(provider || "").toLowerCase();
+  return p === "mock" ? "Built-in" : String(provider || "—");
+}
+
+/** UI label for model when using built-in path. */
+function displayAiModelForUi(provider, model) {
+  const p = String(provider || "").toLowerCase();
+  const m = String(model || "");
+  if (p === "mock" || m === "mock-norfleet-v1") return "Local assistant";
+  return m || "—";
+}
+
+function dataModeLabel(mode) {
+  const m = String(mode || "mock").toLowerCase();
+  if (m === "mock") return "Sample / local";
+  if (m === "csv") return "Uploaded CSV/logs";
+  if (m === "external") return "External API";
+  return mode || "—";
+}
+
+function aiSettingsStatusLine(mockMode, hasApiKey) {
+  if (mockMode) return "Built-in (no provider API key)";
+  if (hasApiKey) return "Configured";
+  return "No API key";
+}
+
+function refreshAdminTokenHint() {
+  const hint = byId("st-admin-token-hint");
+  if (!hint) return;
+  hint.textContent = getSessionAdminToken()
+    ? "A token is saved in this browser and sent as x-norfleet-admin-token when the server expects it."
+    : "";
+}
+
+function saveSessionAdminToken() {
+  const input = byId("st-admin-token");
+  const v = (input?.value || "").trim();
+  if (!v) {
+    showToast("⚠", "Paste a token to save, or use Clear to remove the saved token.");
+    return;
+  }
+  localStorage.setItem("norfleet_admin_token", v);
+  if (input) input.value = "";
+  refreshAdminTokenHint();
+  showToast("◇", "Session access token saved in this browser.");
+}
+
+function clearSessionAdminToken() {
+  localStorage.removeItem("norfleet_admin_token");
+  const input = byId("st-admin-token");
+  if (input) input.value = "";
+  refreshAdminTokenHint();
+  showToast("◇", "Session access token removed.");
+}
+
+function updateAiUsage(meta, statusText = "OK") {
+  if (!meta) return;
+  state.aiUsage.provider = meta.provider || state.aiUsage.provider;
+  state.aiUsage.model = meta.model || state.aiUsage.model;
+  state.aiUsage.estimatedTokens = meta.estimatedTokens ?? state.aiUsage.estimatedTokens;
+  state.aiUsage.costEstimate = meta.costEstimate || state.aiUsage.costEstimate;
+  state.aiUsage.callsThisSession += 1;
+  state.aiUsage.lastStatus = statusText;
+}
+
+function detectKpiAnomaliesClient(kpiHistory, thresholds) {
+  const out = [];
+  Object.entries(kpiHistory || {}).forEach(([kpi, series]) => {
+    if (!Array.isArray(series) || series.length < 5) return;
+    const latest = Number(series[series.length - 1]);
+    const prev = series.slice(-6, -1);
+    const mean = prev.reduce((a, b) => a + Number(b), 0) / prev.length;
+    const deltaPct = mean ? ((latest - mean) / mean) * 100 : 0;
+    const t = thresholds[kpi] || {};
+    const lowBreach = typeof t.min === "number" && latest < t.min;
+    const highBreach = typeof t.max === "number" && latest > t.max;
+    const spike = Math.abs(deltaPct) > (t.maxDeltaPct ?? 12);
+    if (!lowBreach && !highBreach && !spike) return;
+    out.push({
+      kpi,
+      latest: Number(latest.toFixed(2)),
+      baseline: Number(mean.toFixed(2)),
+      deltaPct: Number(deltaPct.toFixed(2)),
+      severity: Math.abs(deltaPct) > 20 ? "High" : Math.abs(deltaPct) > 12 ? "Medium" : "Low"
+    });
+  });
+  return out;
+}
+
+function getAnomalyThresholds() {
+  return {
+    "Pick Accuracy": { min: 92, maxDeltaPct: 8 },
+    "Travel Time": { max: 9, maxDeltaPct: 15 },
+    "Error Rate": { max: 2.5, maxDeltaPct: 20 },
+    "Battery Health": { min: 72, maxDeltaPct: 12 },
+    "Traffic Delay": { max: 4.5, maxDeltaPct: 20 },
+    Uptime: { min: 92, maxDeltaPct: 8 },
+    "Cycle Time": { max: 6.2, maxDeltaPct: 12 }
+  };
+}
+
+function currentFleet() {
+  return state.fleets.find((f) => f.id === state.selectedFleetId) || null;
+}
+
+function logAgentChange(entry) {
+  state.agentChangeLog.unshift({
+    timestamp: new Date().toISOString(),
+    changedBy: "AI Recommendation",
+    ...entry
+  });
+  if (state.agentChangeLog.length > 20) state.agentChangeLog.pop();
 }
 
 function createDefaultAgentBuilderConfig() {
@@ -556,46 +857,6 @@ function layoutBuilderConnectors() {
   }
 }
 
-function buildOverviewTakeawaysFromConfig() {
-  ensureAgentBuilderConfig();
-  const agents = state.agentBuilderConfig.agents;
-  const get = (id) => agents.find((a) => a.id === id);
-  const monitor = get("pre-shift-monitor");
-  const root = get("root-cause");
-  const planner = get("maintenance-planner");
-  const dispatch = get("technician-dispatch");
-
-  const readScope = Object.entries(root?.robots || {})
-    .filter(([, enabled]) => Boolean(enabled))
-    .map(([id]) => id)
-    .slice(0, 2)
-    .join(", ");
-  const scopeText = readScope ? `${readScope}` : "priority robots";
-  const conf = planner?.params?.confidenceRequired ?? 0.85;
-  const autoTicket = dispatch?.params?.autoCreateTicket;
-  const approval = dispatch?.params?.requireTechnicianApproval;
-  const threshold = root?.params?.failureThreshold ?? 3;
-
-  return [
-    {
-      text: `${planner?.name || "Maintenance Planner"}: prioritize ${planner?.assignedTask?.toLowerCase?.() || "repair checklist generation"} for ${scopeText}.`,
-      priority: "High — execution"
-    },
-    {
-      text: `${root?.name || "Root Cause Agent"} trigger threshold is ${threshold}; monitor repeated faults before escalation.`,
-      priority: "High — reliability"
-    },
-    {
-      text: `${dispatch?.name || "Technician Dispatch"} is ${dispatch?.status || "idle"}; ${autoTicket ? "auto-ticketing enabled" : "manual ticket creation"}${approval ? " with technician approval required" : " with autonomous dispatch mode"}.`,
-      priority: "Medium — staffing"
-    },
-    {
-      text: `${monitor?.name || "Pre-Shift Monitor"} confidence gate set near ${(conf * 100).toFixed(0)}%; tune during peak shift windows if needed.`,
-      priority: "Medium — calibration"
-    }
-  ];
-}
-
 function renderOverviewWorkflow() {
   renderWorkflowDiagram("agents-overview-workflow", { interactive: false });
 }
@@ -712,7 +973,8 @@ function setTechnicianActionStatus(actionId, status) {
 }
 
 function getTechnicianRecommendationById(id) {
-  return TECHNICIAN_REPORT_ACTIONS.find((a) => a.id === id) || null;
+  const source = getTechnicianActionSourceList();
+  return source.find((a) => a.id === id) || null;
 }
 
 function insertWorkflowAgentAfter(anchorId, agent) {
@@ -837,7 +1099,7 @@ function applyPeakShiftPlannerUpdate() {
 function afterTechnicianReportMutation() {
   refreshAgentsSharedUI();
   if (state.agentSubView === "builder") renderAgentBuilder();
-  if (state.agentSubView === "report") renderTechnicianReport();
+  if (byId("view-technician-report")?.classList.contains("active")) renderTechnicianReport();
   scheduleLayoutBuilderConnectors();
 }
 
@@ -852,6 +1114,13 @@ function applyTechnicianAction(actionId) {
   if (rec.kind === "technician_task") {
     setTechnicianActionStatus(rec.id, "sent");
     showToast("◇", "Sent to technician · charging dock inspection queued for R-004.");
+    logAgentChange({
+      changeType: "Technician ticket",
+      changedBy: "User",
+      reason: rec.detail || rec.title,
+      before: "Pending",
+      after: "Sent"
+    });
     afterTechnicianReportMutation();
     return;
   }
@@ -872,6 +1141,37 @@ function applyTechnicianAction(actionId) {
   } else if (rec.id === "rec-peak-autoticket") {
     ok = applyPeakShiftPlannerUpdate();
     msg = ok ? "Peak-shift auto-ticket rules applied in Maintenance Planner." : "Could not update agent.";
+  } else if (rec.kind === "create_agent") {
+    const syntheticId = `custom-${String(rec.title || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+    const agent = {
+      id: syntheticId,
+      icon: "⬡",
+      stage: "custom",
+      name: rec.title || "AI Created Agent",
+      role: rec.actionType || "Agent workflow update",
+      triggerCondition: rec.detail || "Based on AI recommendation",
+      assignedTask: rec.detail || "Generated by AI",
+      priorityLevel: "P2",
+      escalationRule: "User review required",
+      status: "active",
+      failures: "—",
+      robots: { "R-001": true, "R-002": true, "R-003": true, "R-004": true },
+      permissions: { readLogs: true, createTicket: true, recommendRepair: true, requestApproval: true, updateHistory: true },
+      params: {
+        failureThreshold: 3,
+        checkFrequency: "On anomaly",
+        runSchedule: "24/7",
+        confidenceRequired: 0.8,
+        autoCreateTicket: false,
+        requireTechnicianApproval: true
+      }
+    };
+    const ins = insertWorkflowAgentAfter("pre-shift-monitor", agent);
+    ok = ins.ok;
+    msg = ok ? `${agent.name} created from AI recommendation.` : "Agent already exists.";
+  } else if (rec.kind === "apply_update" || rec.kind === "apply_builder") {
+    ok = applyTravelTimeSensitivityUpdate();
+    msg = ok ? "Applied update to Root Cause Agent thresholds." : "Could not apply update.";
   }
 
   if (!ok) {
@@ -882,6 +1182,13 @@ function applyTechnicianAction(actionId) {
   setTechnicianActionStatus(rec.id, "applied");
   ensureAgentBuilderConfig();
   state.agentBuilderConfig.dashboardMetrics.suggestedFixes += 1;
+  logAgentChange({
+    changeType: rec.kind === "create_agent" ? "Create agent" : "Modify agent",
+    changedBy: "AI Recommendation",
+    reason: rec.detail || rec.title,
+    before: "Pending",
+    after: "Applied"
+  });
   showToast("◇", msg);
   afterTechnicianReportMutation();
 }
@@ -902,6 +1209,42 @@ function setTechnicianReviewed(actionId, checked) {
   state.technicianReport.reviewed[actionId] = checked;
 }
 
+async function saveTechnicianFeedbackFlow() {
+  const source = getTechnicianActionSourceList();
+  const applied = source.filter((x) => {
+    const s = getTechnicianActionStatus(x.id);
+    return s === "applied" || s === "sent";
+  });
+  if (!applied.length) {
+    showToast("◇", "Apply or send at least one action before feedback.");
+    return;
+  }
+  const target = applied[0];
+  const payload = {
+    actionId: target.id,
+    technicianFeedback: `Technician reviewed ${target.title}.`,
+    fixWorked: true,
+    beforeAfterKpiValues: {
+      before: state.technicianReport.lastAnalysis?.anomalies?.[0] || null,
+      after: { note: "pending live validation" }
+    }
+  };
+  const res = await api("/api/ai/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  state.technicianFeedbackHistory.push({
+    actionId: payload.actionId,
+    feedback: payload.technicianFeedback,
+    fixWorked: payload.fixWorked,
+    learningUpdate: res.learningUpdate
+  });
+  setTechnicianActionStatus(target.id, "completed");
+  showToast("◇", "Technician feedback saved to memory.");
+  renderTechnicianReport();
+}
+
 function trSeverityClass(sev) {
   const s = String(sev || "").toLowerCase();
   if (s === "critical") return "critical";
@@ -911,7 +1254,17 @@ function trSeverityClass(sev) {
 }
 
 function computeTechnicianReportSummary() {
-  const actions = TECHNICIAN_REPORT_ACTIONS;
+  if (state.technicianReport.generatedSummary) {
+    const gs = state.technicianReport.generatedSummary;
+    return {
+      totalAnomalies: gs.totalAnomalies ?? 0,
+      recommendedActions: gs.recommendedActions ?? 0,
+      selfFixEligible: gs.autoFixEligible ?? 0,
+      techApproval: gs.technicianApprovalRequired ?? 0,
+      downtimeAvoided: gs.estimatedDowntimeAvoided || "0h"
+    };
+  }
+  const actions = state.technicianReport.generatedActions || TECHNICIAN_REPORT_ACTIONS;
   const pending = actions.filter((a) => getTechnicianActionStatus(a.id) === "pending").length;
   const applied = actions.filter((a) => {
     const st = getTechnicianActionStatus(a.id);
@@ -921,9 +1274,9 @@ function computeTechnicianReportSummary() {
   const techApproval = actions.filter(
     (a) => a.kind === "technician_task" && getTechnicianActionStatus(a.id) === "pending"
   ).length;
-  const downtimeAvoided = 28 + applied * 6;
+  const downtimeAvoided = `${28 + applied * 6}h`;
   return {
-    totalAnomalies: MOCK_KPI_ANOMALIES.length,
+    totalAnomalies: SAMPLE_KPI_ANOMALIES.length,
     recommendedActions: pending,
     selfFixEligible,
     techApproval,
@@ -931,17 +1284,121 @@ function computeTechnicianReportSummary() {
   };
 }
 
+function getTechnicianActionSourceList() {
+  return state.technicianReport.generatedActions || TECHNICIAN_REPORT_ACTIONS;
+}
+
+async function analyzeKpiAnomaliesWithAI() {
+  const fleet = currentFleet();
+  if (!fleet || !state.lastMetricsSnapshot?.series) {
+    showToast("⚠", "Run KPI Monitor first to gather KPI history.");
+    return null;
+  }
+  const payload = {
+    currentKpiValues: Object.fromEntries(
+      Object.entries(state.lastMetricsSnapshot.series).map(([k, arr]) => [k, arr[arr.length - 1]])
+    ),
+    kpiHistory: state.lastMetricsSnapshot.series,
+    robots: state.robots,
+    activeFleet: fleet,
+    activeAgentConfiguration: state.agentBuilderConfig,
+    technicianFeedbackHistory: state.technicianFeedbackHistory,
+    thresholds: getAnomalyThresholds()
+  };
+  const res = await api("/api/ai/analyze-kpis", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  state.technicianReport.lastAnalysis = res;
+  if (Array.isArray(res.anomalies) && res.anomalies.length) {
+    updateAiUsage(res.metadata, "Analyze KPI Anomalies");
+  } else {
+    updateAiUsage({ provider: "mock", model: "mock-norfleet-v1", estimatedTokens: estimateTokensFromObj(payload), costEstimate: "$0.0000" }, "Analyze KPI Anomalies");
+  }
+  return res;
+}
+
+async function generateAiTechnicianReport() {
+  const analysis = state.technicianReport.lastAnalysis || (await analyzeKpiAnomaliesWithAI());
+  if (!analysis) return;
+  const payload = {
+    anomalies: analysis.anomalies || [],
+    activeAgents: state.agentBuilderConfig?.agents || [],
+    robotLogs: state.robots.flatMap((r) => [`${r.id}: status=${r.status}`]),
+    technicianNotes: state.technicianFeedbackHistory,
+    currentWorkflow: state.agentBuilderConfig
+  };
+  const res = await api("/api/ai/generate-technician-report", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  state.technicianReport.generatedSummary = res.reportSummary || null;
+  state.technicianReport.generatedActions = Array.isArray(res.actions)
+    ? res.actions.map((a, idx) => ({
+        id: a.id || `ai-action-${idx + 1}`,
+        title: a.title || "AI recommendation",
+        detail: a.explanation || a.reason || "No explanation provided.",
+        severity: a.severity || "Medium",
+        source: a.source || "KPI Monitor",
+        kpiAnomalySource: a.kpiAnomalySource || "KPI Monitor",
+        affectedRobots: Array.isArray(a.affectedRobots) ? a.affectedRobots.join(", ") : String(a.affectedRobots || "Fleet-wide"),
+        actionType: a.actionType || "Agent workflow update",
+        buttonLabel: a.buttonLabel || "Apply to Agent Builder",
+        kind:
+          String(a.buttonLabel || "").toLowerCase().includes("technician")
+            ? "technician_task"
+            : String(a.buttonLabel || "").toLowerCase().includes("create")
+              ? "create_agent"
+              : "apply_update",
+        selfFix: Boolean(a.autoFixEligible),
+        requiresHumanApproval: Boolean(a.requiresHumanApproval)
+      }))
+    : null;
+  updateAiUsage(res.metadata, "Generate AI Report");
+  renderTechnicianReport();
+  showToast("◇", "AI-generated maintenance actions ready.");
+}
+
+async function recommendAgentUpdatesWithAI() {
+  const anomalies = state.technicianReport.lastAnalysis?.anomalies || [];
+  const payload = {
+    currentAgentWorkflow: state.agentBuilderConfig,
+    kpiAnomalies: anomalies,
+    repeatedFailures: state.agentBuilderConfig?.agents?.map((a) => ({ id: a.id, failures: a.failures })) || [],
+    technicianFeedback: state.technicianFeedbackHistory
+  };
+  const res = await api("/api/ai/recommend-agent-updates", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  updateAiUsage(res.metadata, "Recommend Agent Updates");
+  const updates = res.agentUpdates || [];
+  if (!updates.length) {
+    showToast("◇", "No additional updates suggested.");
+    return;
+  }
+  updates.forEach((u, idx) => {
+    const id = `ai-update-${idx + 1}`;
+    if (!state.technicianReport.actionStatus[id]) state.technicianReport.actionStatus[id] = "pending";
+  });
+  showToast("◇", `${updates.length} agent workflow updates recommended.`);
+}
+
 function getKpiMonitorBridgeNote() {
   const keys = Object.keys(state.latestSeries || {});
   if (keys.length === 0) {
-    return "KPI anomaly source: mock Norfleet monitor data. Run KPI Monitor on a fleet to align live series with this view.";
+    return "KPI anomaly source: sample Norfleet monitor data. Run KPI Monitor on a fleet to align live series with this view.";
   }
-  return `KPI Monitor live series: ${keys.slice(0, 6).join(", ")}${keys.length > 6 ? "…" : ""}. Anomaly cards below include mock + monitor-style labels.`;
+  return `KPI Monitor live series: ${keys.slice(0, 6).join(", ")}${keys.length > 6 ? "…" : ""}. Anomaly cards below combine sample and live-style labels.`;
 }
 
 function formatActionStatusLabel(st) {
   if (st === "sent") return "Sent";
   if (st === "applied") return "Applied";
+  if (st === "completed") return "Completed";
   return "";
 }
 
@@ -949,7 +1406,16 @@ function renderTechnicianReport() {
   const root = byId("technician-report-root");
   if (!root) return;
   const sum = computeTechnicianReportSummary();
-  const takeaways = buildOverviewTakeawaysFromConfig();
+  const actionSource = getTechnicianActionSourceList();
+  const anomaliesSource =
+    state.technicianReport.lastAnalysis?.anomalies?.map((a) => ({
+      kpi: a.kpi,
+      anomaly: `${a.kpi} anomaly`,
+      target: `${a.robotId || "R-003"} · ${a.zone || "unknown zone"}`,
+      severity: a.severity,
+      cause: a.likelyCause || "See analysis details",
+      action: a.recommendedAction || "Review and approve recommendation"
+    })) || SAMPLE_KPI_ANOMALIES;
 
   const summaryHtml = `
     <div class="tr-summary-grid">
@@ -957,10 +1423,10 @@ function renderTechnicianReport() {
       <div class="tr-summary-stat"><div class="val">${sum.recommendedActions}</div><div class="lbl">Recommended actions</div></div>
       <div class="tr-summary-stat"><div class="val">${sum.selfFixEligible}</div><div class="lbl">Self-fix eligible</div></div>
       <div class="tr-summary-stat"><div class="val">${sum.techApproval}</div><div class="lbl">Technician approval required</div></div>
-      <div class="tr-summary-stat"><div class="val">~${sum.downtimeAvoided}h</div><div class="lbl">Est. downtime avoided</div></div>
+      <div class="tr-summary-stat"><div class="val">~${sum.downtimeAvoided}</div><div class="lbl">Est. downtime avoided</div></div>
     </div>`;
 
-  const anomalyCards = MOCK_KPI_ANOMALIES.map(
+  const anomalyCards = anomaliesSource.map(
     (a) => `
     <div class="tr-anomaly-card">
       <div class="kpi-name">${escapeHtml(a.kpi)}</div>
@@ -972,13 +1438,18 @@ function renderTechnicianReport() {
     </div>`
   ).join("");
 
-  const recRows = TECHNICIAN_REPORT_ACTIONS.map((rec) => {
+  const recRows = actionSource.map((rec) => {
     const st = getTechnicianActionStatus(rec.id);
     const done = st !== "pending";
     const reviewed = state.technicianReport.reviewed[rec.id];
-    const statusHtml = done
-      ? `<span class="tr-status-pill">${escapeHtml(formatActionStatusLabel(st))}</span>`
-      : "";
+    const statusLabel = done
+      ? formatActionStatusLabel(st)
+      : reviewed
+        ? rec.requiresHumanApproval
+          ? "Needs approval"
+          : "Reviewed"
+        : "Draft";
+    const statusHtml = `<span class="tr-status-pill">${escapeHtml(statusLabel)}</span>`;
     const primaryDisabled = done || !reviewed ? "disabled" : "";
     const rowClass = done ? "tr-rec-row applied" : "tr-rec-row";
     return `
@@ -1004,7 +1475,7 @@ function renderTechnicianReport() {
     </div>`;
   }).join("");
 
-  const selfFix = TECHNICIAN_REPORT_ACTIONS.filter((r) => r.selfFix);
+  const selfFix = actionSource.filter((r) => r.selfFix);
   const selfFixCards = selfFix
     .map((rec) => {
       const st = getTechnicianActionStatus(rec.id);
@@ -1020,16 +1491,6 @@ function renderTechnicianReport() {
     })
     .join("");
 
-  const narrative = takeaways
-    .map(
-      (t) => `
-      <li>
-        ${escapeHtml(t.text)}
-        <div class="takeaway-priority">${escapeHtml(t.priority)}</div>
-      </li>`
-    )
-    .join("");
-
   root.innerHTML = `
     <div class="tr-hero">
       <h2>Technician Report</h2>
@@ -1042,7 +1503,17 @@ function renderTechnicianReport() {
         <div class="tr-section-title" id="tr-summary-h">Report summary</div>
         <span class="panel-badge badge-cyan">Live</span>
       </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <button type="button" class="panel-action-btn" id="tr-generate-btn">Generate AI Report</button>
+        <button type="button" class="panel-action-btn" id="tr-analyze-btn">Analyze KPI Anomalies</button>
+        <button type="button" class="panel-action-btn" id="tr-recommend-btn">Recommend Agent Updates</button>
+        <button type="button" class="panel-action-btn" id="tr-apply-selected-btn">Apply Selected Updates</button>
+        <button type="button" class="panel-action-btn" id="tr-save-feedback-btn">Save Technician Feedback</button>
+      </div>
       ${summaryHtml}
+      <p class="muted" style="margin-top:10px;margin-bottom:0;font-size:11px">
+        Provider: ${escapeHtml(displayAiProviderName(state.aiUsage.provider))} · Model: ${escapeHtml(displayAiModelForUi(state.aiUsage.provider, state.aiUsage.model))} · Estimated tokens: ${escapeHtml(String(state.aiUsage.estimatedTokens))} · Estimated cost: ${escapeHtml(state.aiUsage.costEstimate)} · Calls this session: ${escapeHtml(String(state.aiUsage.callsThisSession))} · Last status: ${escapeHtml(state.aiUsage.lastStatus)}
+      </p>
     </section>
 
     <section class="tr-section" aria-labelledby="tr-kpi-h">
@@ -1070,15 +1541,6 @@ function renderTechnicianReport() {
       <p class="muted" style="margin-bottom:12px">Apply changes directly into the shared Agentic AI Builder state and Overview workflow.</p>
       <div class="tr-selffix-grid">${selfFixCards}</div>
     </section>
-
-    <section class="tr-section" aria-labelledby="tr-nar-h">
-      <div class="panel-header" style="margin-bottom:10px">
-        <div class="tr-section-title" id="tr-nar-h">Narrative priorities</div>
-        <span class="panel-badge badge-cyan">Agents</span>
-      </div>
-      <p class="muted" style="margin-bottom:10px">Synced with current agent configuration (same source as former Overview takeaway).</p>
-      <ol class="tr-narrative-list">${narrative}</ol>
-    </section>
   `;
 
   root.querySelectorAll(".tr-rec-row [data-tr-review]").forEach((cb) => {
@@ -1098,6 +1560,26 @@ function renderTechnicianReport() {
   root.querySelectorAll("[data-tr-action]").forEach((btn) => {
     btn.onclick = () => applyTechnicianAction(btn.dataset.trAction);
   });
+
+  byId("tr-generate-btn").onclick = () => generateAiTechnicianReport().catch((e) => showToast("⚠", e.message));
+  byId("tr-analyze-btn").onclick = () =>
+    analyzeKpiAnomaliesWithAI()
+      .then(() => {
+        renderTechnicianReport();
+        showToast("◇", "KPI anomalies analyzed.");
+      })
+      .catch((e) => showToast("⚠", e.message));
+  byId("tr-recommend-btn").onclick = () => recommendAgentUpdatesWithAI().catch((e) => showToast("⚠", e.message));
+  byId("tr-apply-selected-btn").onclick = () => {
+    const source = getTechnicianActionSourceList();
+    const pendingReviewed = source.filter((x) => state.technicianReport.reviewed[x.id] && getTechnicianActionStatus(x.id) === "pending");
+    if (!pendingReviewed.length) {
+      showToast("◇", "No reviewed actions selected.");
+      return;
+    }
+    pendingReviewed.forEach((x) => applyTechnicianAction(x.id));
+  };
+  byId("tr-save-feedback-btn").onclick = () => saveTechnicianFeedbackFlow().catch((e) => showToast("⚠", e.message));
 }
 
 function applySavedField(agentId, saveKey) {
@@ -1242,7 +1724,7 @@ function renderAgentBuilder() {
   const robotsEl = byId("builder-robot-permissions");
   if (robotsEl) {
     robotsEl.innerHTML = `<div class="field-lbl" style="margin-bottom:8px">Robots &amp; fleets scope</div>
-      <div class="builder-checkbox-grid">${MOCK_ROBOT_REGISTRY.map((r) => {
+      <div class="builder-checkbox-grid">${SAMPLE_ROBOT_REGISTRY.map((r) => {
         const checked = draft.robots[r.id];
         return `<label class="builder-check-row nf-check-row"><span>${escapeHtml(r.id)} ${escapeHtml(r.label)}</span><input class="nf-checkbox" type="checkbox" data-robot-id="${r.id}" ${checked ? "checked" : ""} /></label>`;
       }).join("")}</div>
@@ -1383,8 +1865,11 @@ function updateChips(summary) {
   if (c) c.textContent = `${summary.charging} Charging`;
 }
 
-async function api(url, options) {
-  const res = await fetch(url, options);
+async function api(url, options = {}) {
+  const token = getSessionAdminToken();
+  const headers = new Headers(options.headers || {});
+  if (token) headers.set("x-norfleet-admin-token", token);
+  const res = await fetch(url, { ...options, headers });
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -1396,6 +1881,99 @@ async function api(url, options) {
     throw new Error(detail || `HTTP ${res.status}`);
   }
   return res.json();
+}
+
+function openSettingsModal() {
+  const modal = byId("settings-modal");
+  if (!modal) return;
+  modal.classList.add("active");
+  modal.setAttribute("aria-hidden", "false");
+}
+
+function closeSettingsModal() {
+  const modal = byId("settings-modal");
+  if (!modal) return;
+  modal.classList.remove("active");
+  modal.setAttribute("aria-hidden", "true");
+}
+
+function providerDefaultModel(provider) {
+  const p = String(provider || "mock").toLowerCase();
+  if (p === "openai") return "gpt-4o-mini";
+  if (p === "anthropic") return "claude-3-5-sonnet-latest";
+  if (p === "gemini") return "gemini-1.5-pro";
+  return "mock-norfleet-v1";
+}
+
+async function loadSettingsIntoUi() {
+  const data = await api("/api/settings");
+  state.settings = data.settings || state.settings;
+  if (data.aiUsage?.lastCall) updateAiUsage(data.aiUsage.lastCall, "Loaded");
+  byId("st-ai-provider").value = state.settings.ai.provider || "mock";
+  byId("st-ai-model").value = state.settings.ai.model || providerDefaultModel(state.settings.ai.provider);
+  byId("st-ai-key").value = "";
+  byId("st-ai-mock").checked = Boolean(state.settings.ai.mockMode);
+  byId("st-kpi-key").value = "";
+  byId("st-kpi-base").value = state.settings.data.kpiApiBaseUrl || "";
+  byId("st-robot-base").value = state.settings.data.robotApiBaseUrl || "";
+  byId("st-data-mode").value = state.settings.data.dataMode || "mock";
+  byId("st-ai-status").textContent = `Status: ${aiSettingsStatusLine(
+    Boolean(state.settings.ai.mockMode),
+    Boolean(state.settings.ai.hasApiKey)
+  )}`;
+  byId("st-data-status").textContent = `Status: ${dataModeLabel(state.settings.data.dataMode)}`;
+  const adminInput = byId("st-admin-token");
+  if (adminInput) adminInput.value = "";
+  refreshAdminTokenHint();
+}
+
+async function saveAiSettings() {
+  const provider = byId("st-ai-provider").value;
+  const model = byId("st-ai-model").value.trim() || providerDefaultModel(provider);
+  const apiKey = byId("st-ai-key").value.trim();
+  const mockMode = byId("st-ai-mock").checked || provider === "mock";
+  await api("/api/settings/ai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider, model, apiKey, mockMode })
+  });
+  localStorage.setItem("norfleet_ai_provider", provider);
+  localStorage.setItem("norfleet_ai_model", model);
+  localStorage.setItem("norfleet_ai_mock", String(mockMode));
+  byId("st-ai-status").textContent = `Status: ${mockMode ? aiSettingsStatusLine(true, false) : apiKey ? "Configured" : "Saved (no key)"}`;
+  showToast("◇", "AI settings saved.");
+}
+
+async function saveDataSettings() {
+  const payload = {
+    kpiApiKey: byId("st-kpi-key").value.trim(),
+    kpiApiBaseUrl: byId("st-kpi-base").value.trim(),
+    robotApiBaseUrl: byId("st-robot-base").value.trim(),
+    dataMode: byId("st-data-mode").value
+  };
+  await api("/api/settings/data", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  localStorage.setItem("norfleet_data_mode", payload.dataMode);
+  byId("st-data-status").textContent = `Status: ${dataModeLabel(payload.dataMode)}`;
+  showToast("◇", "Data source settings saved.");
+}
+
+async function testAiConnection() {
+  const data = await api("/api/settings/test-connection", { method: "POST" });
+  byId("st-ai-status").textContent = `Status: ${data.status} (${displayAiProviderName(data.provider)})`;
+  if (data.meta) updateAiUsage(data.meta, "Test connection");
+  showToast("◇", data.status);
+}
+
+async function clearSettingsKeys() {
+  await api("/api/settings/clear-keys", { method: "POST" });
+  byId("st-ai-key").value = "";
+  byId("st-kpi-key").value = "";
+  byId("st-ai-status").textContent = "Status: Keys cleared";
+  showToast("◇", "Stored keys cleared.");
 }
 
 function syncFleetDropdowns() {
@@ -1476,36 +2054,253 @@ function renderKpis(kpis) {
     renderChartsEmptyState();
     return;
   }
+  const series = state.latestSeries || {};
   kpis.forEach((kpi) => {
     const tag = document.createElement("button");
     tag.type = "button";
-    tag.className = `kpi-tag ${state.enabledKpis.has(kpi) ? "active" : "disabled"}`;
-    tag.textContent = kpi;
+    tag.dataset.kpi = kpi;
+    const det = detectKpiChartAnomaly(kpi, series[kpi]);
+    const anom = det.anomalous;
+    tag.className = `kpi-tag ${state.enabledKpis.has(kpi) ? "active" : "disabled"}${anom ? " kpi-tag--anomaly" : ""}`;
+    const badges =
+      det.badges.length > 0
+        ? `<span class="kpi-tag-badges">${det.badges.map((b) => `<span class="kpi-mini-badge">${escapeHtml(b)}</span>`).join("")}</span>`
+        : "";
+    tag.innerHTML = `<span class="kpi-tag-name">${escapeHtml(kpi)}</span>${badges}`;
     tag.onclick = () => toggleKpi(kpi);
     kpiList.appendChild(tag);
   });
 }
 
+function chartColorsForDetection(detection) {
+  return detection.anomalous
+    ? { line: "#f87171", fill: "rgba(248,113,113,0.12)" }
+    : { line: "#00e5ff", fill: "rgba(0,229,255,0.08)" };
+}
+
+let norfleetCrosshairPluginRegistered = false;
+
+function withAlphaCssColor(color, alpha) {
+  const s = String(color || "#00e5ff").trim();
+  const m = s.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  if (m) return `rgba(${m[1]},${m[2]},${m[3]},${alpha})`;
+  if (s.startsWith("#") && s.length === 7) {
+    const r = parseInt(s.slice(1, 3), 16);
+    const g = parseInt(s.slice(3, 5), 16);
+    const b = parseInt(s.slice(5, 7), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+  return s;
+}
+
+function formatKpiCrosshairYValue(v) {
+  const n = Number(v);
+  if (Number.isNaN(n)) return String(v);
+  if (Math.abs(n - Math.round(n)) < 1e-9 && Math.abs(n) < 1e12) return String(Math.round(n));
+  if (Math.abs(n) >= 100) return n.toFixed(1);
+  if (Math.abs(n) >= 10) return n.toFixed(2);
+  return n.toFixed(3);
+}
+
+function roundRectPath(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+const norfleetCrosshairPlugin = {
+  id: "norfleetCrosshair",
+  afterInit(chart) {
+    chart.$crosshair = null;
+    const canvas = chart.canvas;
+    const ac = new AbortController();
+    const { signal } = ac;
+
+    let raf = null;
+    let lastEvent = null;
+    const applyFromEvent = (e) => {
+      const items = chart.getElementsAtEventForMode(e, "index", { intersect: false }, false);
+      if (!items.length) {
+        if (chart.$crosshair) {
+          chart.$crosshair = null;
+          chart.update("none");
+        }
+        return;
+      }
+      const el = items[0];
+      const { x, y } = el.element.getProps(["x", "y"], true);
+      const raw = chart.data.datasets[0].data[el.index];
+      const next = { x, y, value: raw, index: el.index };
+      const prev = chart.$crosshair;
+      if (prev && prev.index === next.index && prev.value === next.value) return;
+      chart.$crosshair = next;
+      chart.update("none");
+    };
+
+    const onMove = (e) => {
+      lastEvent = e;
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = null;
+        const ev = lastEvent;
+        lastEvent = null;
+        if (ev) applyFromEvent(ev);
+      });
+    };
+    const onLeave = () => {
+      lastEvent = null;
+      if (raf) cancelAnimationFrame(raf);
+      raf = null;
+      if (chart.$crosshair) {
+        chart.$crosshair = null;
+        chart.update("none");
+      }
+    };
+
+    canvas.addEventListener("mousemove", onMove, { signal });
+    canvas.addEventListener("mouseleave", onLeave, { signal });
+    chart.$crosshairCleanup = () => ac.abort();
+  },
+  destroy(chart) {
+    if (typeof chart.$crosshairCleanup === "function") chart.$crosshairCleanup();
+  },
+  afterDraw(chart) {
+    const hit = chart.$crosshair;
+    if (!hit) return;
+    const { ctx, chartArea } = chart;
+    const color = chart.data.datasets[0].borderColor || "#00e5ff";
+    const dim = withAlphaCssColor(color, 0.55);
+    const text = formatKpiCrosshairYValue(hit.value);
+    ctx.save();
+    ctx.beginPath();
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = dim;
+    ctx.lineWidth = 1;
+    ctx.moveTo(hit.x, chartArea.top);
+    ctx.lineTo(hit.x, chartArea.bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.fillStyle = color;
+    ctx.strokeStyle = "rgba(15,23,42,0.92)";
+    ctx.lineWidth = 2;
+    ctx.arc(hit.x, hit.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.font = "600 12px ui-monospace, 'Cascadia Code', 'Segoe UI Mono', monospace";
+    const padX = 10;
+    const padY = 6;
+    const metrics = ctx.measureText(text);
+    const boxW = metrics.width + padX * 2;
+    const boxH = 24;
+    let bx = hit.x + 12;
+    let by = hit.y - boxH / 2;
+    bx = Math.min(Math.max(bx, chartArea.left + 2), chartArea.right - boxW - 2);
+    by = Math.min(Math.max(by, chartArea.top + 2), chartArea.bottom - boxH - 2);
+    ctx.fillStyle = "rgba(15,23,42,0.94)";
+    ctx.strokeStyle = withAlphaCssColor(color, 0.45);
+    ctx.lineWidth = 1;
+    roundRectPath(ctx, bx, by, boxW, boxH, 6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#e2e8f0";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    ctx.fillText(text, bx + padX, by + boxH / 2);
+    ctx.restore();
+  }
+};
+
+function registerNorfleetCrosshairPlugin() {
+  if (norfleetCrosshairPluginRegistered || !window.Chart) return;
+  Chart.register(norfleetCrosshairPlugin);
+  norfleetCrosshairPluginRegistered = true;
+}
+
+function chartJsOptionsForKpi() {
+  const axisFontFamily = "ui-monospace, 'Cascadia Code', 'Segoe UI Mono', monospace";
+  const tickFont = { size: 11, family: axisFontFamily };
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    interaction: { mode: "index", intersect: false, axis: "x" },
+    plugins: {
+      legend: { display: false },
+      tooltip: { enabled: false }
+    },
+    layout: {
+      padding: { left: 0, right: 4, top: 2, bottom: 2 }
+    },
+    scales: {
+      x: {
+        display: true,
+        offset: true,
+        ticks: {
+          color: "#94a3b8",
+          maxTicksLimit: 9,
+          font: tickFont,
+          padding: 4,
+          autoSkip: true,
+          autoSkipPadding: 10,
+          maxRotation: 0,
+          minRotation: 0
+        },
+        grid: { color: "rgba(255,255,255,0.05)" }
+      },
+      y: {
+        display: true,
+        offset: true,
+        ticks: {
+          color: "#94a3b8",
+          font: tickFont,
+          padding: 6,
+          maxTicksLimit: 9,
+          mirror: false
+        },
+        grid: { color: "rgba(255,255,255,0.05)" }
+      }
+    }
+  };
+}
+
 function upsertChart(kpi, values) {
   const chartsWrap = byId("charts");
   if (!chartsWrap || !window.Chart) return;
+  registerNorfleetCrosshairPlugin();
+  const safeId = kpi.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9-]/g, "");
+  const numericValues = (values || []).map(Number);
+  const detection = detectKpiChartAnomaly(kpi, numericValues);
+  const colors = chartColorsForDetection(detection);
+  const badgeHtml = detection.badges.map((b) => `<span class="chart-badge">${escapeHtml(b)}</span>`).join("");
+  const unitPair = escapeHtml(getKpiChartMeta(kpi).chartHeaderUnits);
+
   if (!state.charts[kpi]) {
     const card = document.createElement("div");
-    card.className = "chart-card";
-    const safeId = kpi.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9-]/g, "");
-    card.innerHTML = `<div class="chart-title">${kpi}</div><canvas id="chart-${safeId}" height="190"></canvas>`;
+    card.className = `chart-card${detection.anomalous ? " chart-card--anomaly" : ""}`;
+    card.innerHTML = `<div class="chart-card-head">
+      <div class="chart-title-block">
+        <div class="chart-title">${escapeHtml(kpi)} <span class="chart-unit-pair">(${unitPair})</span></div>
+      </div>
+      <div class="chart-badges">${badgeHtml}</div>
+    </div><div class="chart-canvas-wrap"><canvas id="chart-${safeId}"></canvas></div>`;
     chartsWrap.appendChild(card);
     const canvas = card.querySelector("canvas");
     state.charts[kpi] = new Chart(canvas, {
       type: "line",
       data: {
-        labels: values.map((_, idx) => idx + 1),
+        labels: numericValues.map((_, idx) => idx + 1),
         datasets: [
           {
             label: kpi,
-            data: values,
-            borderColor: "#00e5ff",
-            backgroundColor: "rgba(0,229,255,0.08)",
+            data: numericValues,
+            borderColor: colors.line,
+            backgroundColor: colors.fill,
             fill: true,
             borderWidth: 2,
             pointRadius: 0,
@@ -1513,22 +2308,21 @@ function upsertChart(kpi, values) {
           }
         ]
       },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { display: true, ticks: { color: "#64748b", maxTicksLimit: 8 }, grid: { color: "rgba(255,255,255,0.05)" } },
-          y: { display: true, ticks: { color: "#64748b" }, grid: { color: "rgba(255,255,255,0.05)" } }
-        }
-      }
+      options: chartJsOptionsForKpi()
     });
   } else {
     const chart = state.charts[kpi];
-    chart.data.labels = values.map((_, idx) => idx + 1);
-    chart.data.datasets[0].data = values;
+    chart.data.labels = numericValues.map((_, idx) => idx + 1);
+    chart.data.datasets[0].data = numericValues;
+    chart.data.datasets[0].borderColor = colors.line;
+    chart.data.datasets[0].backgroundColor = colors.fill;
     chart.update();
+    const card = chart.canvas.closest(".chart-card");
+    if (card) {
+      card.classList.toggle("chart-card--anomaly", detection.anomalous);
+      const badgesEl = card.querySelector(".chart-badges");
+      if (badgesEl) badgesEl.innerHTML = badgeHtml;
+    }
   }
 }
 
@@ -1570,7 +2364,7 @@ function toggleKpi(kpi) {
   else state.enabledKpis.add(kpi);
 
   const currentKpis = byId("kpi-list")
-    ? Array.from(byId("kpi-list").querySelectorAll(".kpi-tag")).map((el) => el.textContent)
+    ? Array.from(byId("kpi-list").querySelectorAll(".kpi-tag")).map((el) => el.dataset.kpi)
     : [];
   renderKpis(currentKpis);
   renderEnabledCharts();
@@ -1668,8 +2462,9 @@ async function detectKpisForFleet() {
 async function loadMetricsAndStream() {
   if (!state.selectedFleetId) return;
   const metrics = await api(`/api/fleets/${state.selectedFleetId}/metrics`);
-  renderKpis(metrics.kpis);
+  state.lastMetricsSnapshot = metrics;
   syncCharts(metrics.series);
+  renderKpis(metrics.kpis);
 
   const selected = state.fleets.find((f) => f.id === state.selectedFleetId);
   if (selected?.summary) updateSummary(selected.summary);
@@ -1678,8 +2473,9 @@ async function loadMetricsAndStream() {
   state.stream = new EventSource(`/api/stream?fleetId=${encodeURIComponent(state.selectedFleetId)}`);
   state.stream.onmessage = (event) => {
     const data = JSON.parse(event.data);
-    renderKpis(data.kpis);
+    state.lastMetricsSnapshot = { fleetId: data.fleetId, kpis: data.kpis, series: data.series };
     syncCharts(data.series);
+    renderKpis(data.kpis);
     updateSummary(data.summary);
   };
   state.stream.onerror = () => {
@@ -1693,6 +2489,30 @@ function bindEvents() {
   byId("add-robot-btn").onclick = () => addRobot().catch((e) => showToast("⚠", e.message));
   byId("create-fleet-btn").onclick = () => createFleet().catch((e) => showToast("⚠", e.message));
   byId("detect-kpis-btn").onclick = () => detectKpisForFleet().catch((e) => showToast("⚠", e.message));
+  byId("analyze-with-ai-btn").onclick = () =>
+    analyzeKpiAnomaliesWithAI()
+      .then(() => {
+        switchView("technician-report", getNavTab("technician-report"));
+        renderTechnicianReport();
+      })
+      .catch((e) => showToast("⚠", e.message));
+
+  byId("open-settings-btn").onclick = () =>
+    loadSettingsIntoUi()
+      .then(() => openSettingsModal())
+      .catch((e) => showToast("⚠", e.message));
+  byId("close-settings-btn").onclick = () => closeSettingsModal();
+  byId("st-save-ai-btn").onclick = () => saveAiSettings().catch((e) => showToast("⚠", e.message));
+  byId("st-save-data-btn").onclick = () => saveDataSettings().catch((e) => showToast("⚠", e.message));
+  byId("st-test-ai-btn").onclick = () => testAiConnection().catch((e) => showToast("⚠", e.message));
+  byId("st-clear-keys-btn").onclick = () => clearSettingsKeys().catch((e) => showToast("⚠", e.message));
+  const saveAdmin = byId("st-save-admin-token-btn");
+  const clearAdmin = byId("st-clear-admin-token-btn");
+  if (saveAdmin) saveAdmin.onclick = () => saveSessionAdminToken();
+  if (clearAdmin) clearAdmin.onclick = () => clearSessionAdminToken();
+  byId("st-ai-provider").onchange = (e) => {
+    byId("st-ai-model").value = providerDefaultModel(e.target.value);
+  };
 }
 
 window.switchView = switchView;
@@ -1708,6 +2528,7 @@ window.setTechnicianReviewed = setTechnicianReviewed;
 setInterval(updateClock, 1000);
 updateClock();
 bindEvents();
+loadSettingsIntoUi().catch(() => {});
 loadInitial()
   .then(() => {
     if (state.selectedFleetId) {

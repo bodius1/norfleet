@@ -1,0 +1,67 @@
+---
+description: Styling, routing, and XML rules for generating clean, editable draw.io architecture diagrams. Apply whenever creating or editing .drawio files.
+alwaysApply: false
+---
+
+# draw.io diagram standards
+
+## Canvas
+- Light canvas only. Never reference or assume a dark background.
+- Use: page="0", grid="1", gridSize="10" (infinite canvas for docs).
+
+## Visual style
+- Light-card style: white rounded rectangles for inner content blocks, soft pastel containers/swimlanes.
+- Text is always dark: #111827 or #1a1a1a. Never light text on light boxes.
+- Node text 14–16px. Section/swimlane titles 18–20px.
+- Inner blocks large enough that text isn't cramped; comfortable padding.
+- Inner blocks should visually fill their container — no huge dead space, no disconnected-island lanes.
+- Diagram must be readable at 75% zoom.
+- Short node text: title + 2–4 short lines.
+
+## Connector colors (by SOURCE lane)
+- UI / Entry = blue
+- Logic / Core = green
+- Data / Assets = gold/yellow
+- State / Auth = purple
+- AI / External Services = red/pink
+- Backend / API = orange or teal
+- Hosting / Deployment = gray
+Apply the source-lane color to the stroke (and badge accent, if used).
+
+## Routing (build it right the first time — these are generation constraints, not a cleanup pass)
+- Orthogonal connectors only. Prefer short direct routes; 2–4 bends max.
+- Connectors may cross each other and may pass through lane gaps, top gutters, and lower buses.
+- Connectors may NOT pass through the interior of any white content block — route around them.
+- Long cross-lane routes use canvas gutters above or below swimlanes — never through unrelated swimlane bodies.
+- A "top gutter" route goes literally above the swimlane title bars, not between the title and the first block.
+- A "lower bus" goes below the outer containers, not through their interiors.
+- Don't route everything through one bus — split flows across top, middle, and bottom.
+- Stagger parallel routes by 12–20px. Never stack parallel connectors on top of each other.
+- If a route can't be clean, move the block slightly. If a relationship is obvious from grouping, drop the arrow.
+- Avoid intra-lane arrows between adjacent blocks unless the relationship is genuinely important.
+
+## Arrow endpoints
+- Attach to the nearest logical side of source and destination.
+- Don't dump arrowheads on the top of a block when the line approaches from the side/bottom.
+- Stagger endpoints when multiple arrows hit the same block; never land two on the same coordinate.
+
+## Line styles
+- Solid colored arrow = confirmed main data/control flow.
+- Dashed colored arrow = optional / inferred / external / needs-verification.
+- No dotted lines unless the legend defines them. strokeWidth=3 for main connectors.
+
+## Labels & legend
+- Avoid text labels on arrows. Use numbered badges in small white rounded rectangles with dark text, placed near (not on) the connector.
+- Always include a legend explaining: numbered markers, solid vs dashed meaning, source-lane colors, and any project-specific terms (e.g. BYOK).
+
+## draw.io XML (fallback only — skip if the MCP builds via tool calls)
+- Root must include <mxCell id="0"/> and <mxCell id="1" parent="0"/>.
+- Unique IDs; every non-root cell has a valid parent.
+- Vertices have vertex="1"; edges have edge="1" with source/target referencing existing vertex IDs.
+- Define all vertices before edges. Every <mxGeometry> has as="geometry".
+- Escape XML: &amp; not &; no stray < or > in labels; html=1 for labels with line breaks.
+
+## When editing an existing .drawio file
+- Preserve existing pages and content unless told otherwise.
+- Prefer moving/resizing/restyling/rerouting over regenerating from scratch.
+- Confirm the file still opens in draw.io.

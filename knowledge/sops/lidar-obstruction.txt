@@ -1,0 +1,4 @@
+Lidar obstruction troubleshooting:
+- Verify lens cleanliness and check for packaging debris near front scanner.
+- Recalibrate obstacle envelope if false positives occur repeatedly at lane merge points.
+- If obstruction warnings persist for over 3 cycles, reduce speed cap by 12% and request technician inspection.

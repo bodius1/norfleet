@@ -160,6 +160,29 @@
       text-transform: uppercase;
     }
 
+    .settings-btn {
+      appearance: none;
+      border: 1px solid var(--border2);
+      background: var(--bg3);
+      color: var(--text2);
+      border-radius: 8px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      font-size: 15px;
+      font-family: var(--font-mono);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .settings-btn:hover {
+      color: var(--accent);
+      border-color: rgba(0,229,255,0.42);
+      box-shadow: 0 0 0 1px rgba(0,229,255,0.15);
+    }
+
     .header-right { display: flex; align-items: center; gap: 10px; }
 
     .status-chips { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
@@ -212,6 +235,66 @@
 
     .view { display: none; }
     .view.active { display: block; }
+
+    .settings-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1100;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(3, 6, 12, 0.65);
+      backdrop-filter: blur(4px);
+    }
+    .settings-modal.active { display: flex; }
+    .settings-modal-card {
+      width: min(980px, calc(100vw - 40px));
+      max-height: calc(100vh - 40px);
+      overflow: auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+    }
+    .settings-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-top: 10px;
+    }
+    .settings-panel {
+      background: var(--bg2);
+      border: 1px solid var(--border2);
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .settings-row {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .settings-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .settings-warn {
+      margin-top: 10px;
+      font-size: 11px;
+      color: var(--text3);
+      line-height: 1.4;
+    }
+    .settings-status {
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--accent);
+      margin-top: 4px;
+    }
+    @media (max-width: 920px) {
+      .settings-grid { grid-template-columns: 1fr; }
+    }
 
     .row-2 {
       display: grid;
@@ -346,6 +429,11 @@
       font-family: var(--font-mono);
       cursor: pointer;
       transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 4px 6px;
+      max-width: 100%;
     }
     .kpi-tag.active {
       background: rgba(0,229,255,0.12);
@@ -361,6 +449,34 @@
     .kpi-tag:hover {
       transform: translateY(-1px);
       border-color: rgba(0,229,255,0.35);
+    }
+    .kpi-tag.kpi-tag--anomaly.active {
+      border-color: rgba(248,113,113,0.55);
+      color: #fca5a5;
+      background: rgba(248,113,113,0.1);
+      box-shadow: 0 0 0 1px rgba(248,113,113,0.12), 0 0 16px rgba(248,113,113,0.18);
+    }
+    .kpi-tag.kpi-tag--anomaly.disabled {
+      border-color: rgba(248,113,113,0.35);
+      color: #f87171;
+    }
+    .kpi-tag-name { line-height: 1.2; }
+    .kpi-tag-badges {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+    }
+    .kpi-mini-badge {
+      font-size: 9px;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(248,113,113,0.14);
+      border: 1px solid rgba(248,113,113,0.4);
+      color: #fca5a5;
     }
 
     .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 14px 0; }
@@ -383,21 +499,81 @@
 
     .charts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
     .chart-card {
+      display: flex;
+      flex-direction: column;
       background: var(--bg2);
       border: 1px solid var(--border);
       border-radius: 10px;
-      padding: 12px;
-      height: 240px;
+      padding: 10px 12px 12px;
+      height: 268px;
+      min-height: 220px;
+      transition: border-color 0.25s ease, box-shadow 0.25s ease;
     }
-    .chart-card .chart-title {
+    .chart-card--anomaly {
+      border-color: rgba(248,113,113,0.55);
+      box-shadow:
+        0 0 22px rgba(248,113,113,0.14),
+        inset 0 0 0 1px rgba(248,113,113,0.08);
+    }
+    .chart-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+      flex-shrink: 0;
+    }
+    .chart-title-block {
+      flex: 1;
+      min-width: 0;
+    }
+    .chart-unit-pair {
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.03em;
+      text-transform: none;
+      color: var(--text2);
+      white-space: normal;
+    }
+    .chart-canvas-wrap {
+      flex: 1;
+      min-height: 0;
+      position: relative;
+      width: 100%;
+    }
+    .chart-canvas-wrap canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+    }
+    .chart-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      justify-content: flex-end;
+      max-width: 55%;
+    }
+    .chart-badge {
+      font-size: 9px;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 2px 7px;
+      border-radius: 4px;
+      border: 1px solid rgba(248,113,113,0.45);
+      color: #fca5a5;
+      background: rgba(248,113,113,0.1);
+      white-space: nowrap;
+    }
+    .chart-title-block .chart-title {
       font-size: 13px;
       font-family: var(--font-mono);
       color: var(--text3);
       letter-spacing: 1px;
       text-transform: uppercase;
-      margin-bottom: 8px;
+      margin-bottom: 0;
+      line-height: 1.4;
     }
-    .chart-card canvas { width: 100% !important; height: 190px !important; }
 
     .toast {
       position: fixed;
@@ -1540,7 +1716,7 @@
       <img src="assets/logo.svg" alt="Norfleet logo" class="logo-mark" width="36" height="36" />
       <div class="logo">
         <div class="logo-text">NOR<span>FLEET</span></div>
-        <div class="logo-sub">Self-learning maintenance platform for robot fleets.</div>
+        <div class="logo-sub">AI-powered maintenance platform for robot fleets.</div>
       </div>
     </div>
     <div class="header-center">
@@ -1548,6 +1724,7 @@
       <span id="live-clock"></span>
       <span>&nbsp;·&nbsp;</span>
       <span>Norfleet MVP</span>
+      <button type="button" class="settings-btn" id="open-settings-btn" aria-label="Open settings" title="Settings">⚙</button>
     </div>
     <div class="header-right">
       <div class="status-chips">
@@ -1626,6 +1803,7 @@
           <label class="field-lbl" style="margin:0;width:100%">Fleet</label>
           <select id="fleet-select-monitor" style="max-width:320px"></select>
           <button class="ai-detect-btn" type="button" id="detect-kpis-btn">◈ Detect KPIs (AI)</button>
+          <button class="panel-action-btn" type="button" id="analyze-with-ai-btn">Analyze with AI</button>
         </div>
         <p class="muted" id="status">Choose a fleet, run AI detection, then watch live series.</p>
         <div class="kpi-list" id="kpi-list"></div>
@@ -1762,6 +1940,93 @@
       <div id="technician-report-root" class="technician-report"></div>
     </div>
   </main>
+
+  <div class="settings-modal" id="settings-modal" aria-hidden="true">
+    <div class="settings-modal-card">
+      <div class="panel-header">
+        <div class="panel-title">Settings</div>
+        <button type="button" class="panel-action-btn" id="close-settings-btn">Close</button>
+      </div>
+      <div class="settings-grid">
+        <section class="settings-panel">
+          <div class="panel-header" style="margin-bottom:10px">
+            <div class="panel-title">AI Provider Settings</div>
+            <span class="panel-badge badge-purple">LLM</span>
+          </div>
+          <div class="settings-row">
+            <label class="field-lbl">Session access token</label>
+            <input id="st-admin-token" type="password" autocomplete="off" placeholder="If the server sets NORFLEET_ADMIN_TOKEN, paste it here" />
+          </div>
+          <div class="settings-actions" style="margin-bottom:6px">
+            <button type="button" class="panel-action-btn" id="st-save-admin-token-btn">Save token</button>
+            <button type="button" class="panel-action-btn" id="st-clear-admin-token-btn">Clear token</button>
+          </div>
+          <p class="settings-warn" style="margin:0 0 12px;font-size:12px" id="st-admin-token-hint"></p>
+          <div class="settings-row">
+            <label class="field-lbl">Provider</label>
+            <select id="st-ai-provider">
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="gemini">Gemini</option>
+              <option value="mock">Built-in (no API key)</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <label class="field-lbl">API key</label>
+            <input id="st-ai-key" type="password" placeholder="Provider API key (local use only)" />
+          </div>
+          <div class="settings-row">
+            <label class="field-lbl">Model</label>
+            <input id="st-ai-model" type="text" placeholder="gpt-4o-mini / claude-3-5-sonnet / gemini-1.5-pro" />
+          </div>
+          <label class="builder-check-row nf-check-row">
+            <span>Use built-in responses without calling a provider API</span>
+            <input class="nf-checkbox" id="st-ai-mock" type="checkbox" checked />
+          </label>
+          <div class="settings-actions">
+            <button type="button" class="btn-primary" id="st-save-ai-btn">Save settings</button>
+            <button type="button" class="panel-action-btn" id="st-test-ai-btn">Test connection</button>
+          </div>
+          <div class="settings-status" id="st-ai-status">Status: Built-in (no provider API key)</div>
+        </section>
+
+        <section class="settings-panel">
+          <div class="panel-header" style="margin-bottom:10px">
+            <div class="panel-title">KPI / Robot Data Source</div>
+            <span class="panel-badge badge-cyan">Data</span>
+          </div>
+          <div class="settings-row">
+            <label class="field-lbl">KPI API key</label>
+            <input id="st-kpi-key" type="password" placeholder="kpi-key..." />
+          </div>
+          <div class="settings-row">
+            <label class="field-lbl">KPI API base URL</label>
+            <input id="st-kpi-base" type="text" placeholder="https://kpi-api.example.com" />
+          </div>
+          <div class="settings-row">
+            <label class="field-lbl">Robot fleet API base URL</label>
+            <input id="st-robot-base" type="text" placeholder="https://fleet-api.example.com" />
+          </div>
+          <div class="settings-row">
+            <label class="field-lbl">Data mode</label>
+            <select id="st-data-mode">
+              <option value="mock">Sample / local data</option>
+              <option value="csv">Uploaded CSV/logs</option>
+              <option value="external">External API</option>
+            </select>
+          </div>
+          <div class="settings-actions">
+            <button type="button" class="btn-primary" id="st-save-data-btn">Save settings</button>
+            <button type="button" class="panel-action-btn" id="st-clear-keys-btn">Clear keys</button>
+          </div>
+          <div class="settings-status" id="st-data-status">Status: Sample / local</div>
+        </section>
+      </div>
+      <p class="settings-warn">
+        Local use only. Do not paste production secrets. Keys stay in this browser and are not committed to Git. Built-in assistant mode works without provider API keys.
+      </p>
+    </div>
+  </div>
 
   <div class="toast" id="toast" role="status">
     <span id="toast-icon"></span>

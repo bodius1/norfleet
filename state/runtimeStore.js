@@ -1,98 +1,108 @@
 /**
- * Mutable in-memory runtime state. All reads/writes go through this module.
+ * Runtime facade over persistence repository — single source of truth.
  */
+let repo = null;
 
-const robots = [];
-const fleets = [];
-const fleetHistory = {};
-const technicianTickets = [];
-const technicianFeedbackHistory = [];
-const aiSessionCalls = [];
-let activeAgentsRuntime = [];
+function init(repository) {
+  repo = repository;
+}
+
+function requireRepo() {
+  if (!repo) throw new Error("runtimeStore not initialized");
+  return repo;
+}
 
 function getRobots() {
-  return robots;
+  return requireRepo().getRobots();
 }
 
 function addRobot(robot) {
-  robots.push(robot);
-  return robot;
+  return requireRepo().addRobot(robot);
 }
 
 function updateRobotStatuses(mutator) {
+  const robots = getRobots();
   robots.forEach(mutator);
+  requireRepo().setRobots(robots);
 }
 
 function getFleets() {
-  return fleets;
+  return requireRepo().getFleets();
 }
 
 function findFleet(fleetId) {
-  return fleets.find((f) => f.id === fleetId) || null;
+  return getFleets().find((f) => f.id === fleetId) || null;
 }
 
 function addFleet(fleet) {
-  fleets.push(fleet);
-  return fleet;
+  return requireRepo().addFleet(fleet);
 }
 
 function setFleetKpis(fleetId, kpis) {
-  const fleet = findFleet(fleetId);
-  if (fleet) fleet.kpis = kpis;
+  const fleets = getFleets();
+  const fleet = fleets.find((f) => f.id === fleetId);
+  if (fleet) {
+    fleet.kpis = kpis;
+    requireRepo().setFleets(fleets);
+  }
 }
 
 function getFleetHistory(fleetId) {
-  return fleetHistory[fleetId] || null;
+  const h = requireRepo().getFleetHistory();
+  return fleetId ? h[fleetId] || null : h;
 }
 
 function getFleetHistoryRef() {
-  return fleetHistory;
+  return requireRepo().getFleetHistory();
 }
 
 function ensureHistory(fleetId, kpis, baselineForKpi) {
-  if (!fleetHistory[fleetId]) {
-    fleetHistory[fleetId] = {};
-  }
+  const history = requireRepo().getFleetHistory();
+  if (!history[fleetId]) history[fleetId] = {};
   kpis.forEach((kpi) => {
-    if (!fleetHistory[fleetId][kpi]) {
-      fleetHistory[fleetId][kpi] = Array.from({ length: 20 }, () => baselineForKpi(kpi));
+    if (!history[fleetId][kpi]) {
+      history[fleetId][kpi] = Array.from({ length: 20 }, () => baselineForKpi(kpi));
     }
   });
+  requireRepo().setFleetHistory(history);
 }
 
 function appendKpiSample(fleetId, kpi, value, maxLen = 30) {
-  const arr = fleetHistory[fleetId][kpi];
+  const history = requireRepo().getFleetHistory();
+  if (!history[fleetId]?.[kpi]) return;
+  const arr = history[fleetId][kpi];
   arr.push(value);
   if (arr.length > maxLen) arr.shift();
+  requireRepo().setFleetHistory(history);
 }
 
 function getTechnicianTickets() {
-  return technicianTickets;
+  return requireRepo().getTechnicianTickets();
 }
 
 function getTechnicianFeedbackHistory() {
-  return technicianFeedbackHistory;
+  return requireRepo().getFeedback();
 }
 
 function getAiSessionCalls() {
-  return aiSessionCalls;
+  return requireRepo().getAiSessionCalls();
 }
 
 function pushAiSessionCall(entry) {
-  aiSessionCalls.push(entry);
+  requireRepo().pushAiSessionCall(entry);
 }
 
 function getActiveAgentsRuntime() {
-  return activeAgentsRuntime;
+  return requireRepo().getAgentRuntime();
 }
 
 function setActiveAgentsRuntime(definitions) {
-  activeAgentsRuntime = definitions;
+  requireRepo().setAgentRuntime(definitions);
 }
 
 function nextRobotId() {
   let max = 0;
-  for (const r of robots) {
+  for (const r of getRobots()) {
     const m = /^R-(\d+)$/.exec(r.id);
     if (m) max = Math.max(max, parseInt(m[1], 10));
   }
@@ -101,7 +111,7 @@ function nextRobotId() {
 
 function nextFleetId() {
   let max = 0;
-  for (const f of fleets) {
+  for (const f of getFleets()) {
     const m = /^F-(\d+)$/.exec(f.id);
     if (m) max = Math.max(max, parseInt(m[1], 10));
   }
@@ -109,6 +119,7 @@ function nextFleetId() {
 }
 
 module.exports = {
+  init,
   getRobots,
   addRobot,
   updateRobotStatuses,

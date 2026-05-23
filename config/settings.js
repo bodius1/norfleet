@@ -29,7 +29,8 @@ const sessionSettings = {
     kpiApiKey: "",
     kpiApiBaseUrl: "",
     robotApiBaseUrl: "",
-    dataMode: "mock"
+    dataMode: "mock",
+    telemetryAdapter: process.env.NORFLEET_TELEMETRY_ADAPTER || "simulated"
   }
 };
 
@@ -47,6 +48,7 @@ function getSettingsSnapshot() {
     },
     data: {
       dataMode: sessionSettings.data.dataMode,
+      telemetryAdapter: sessionSettings.data.telemetryAdapter,
       kpiApiBaseUrl: sessionSettings.data.kpiApiBaseUrl,
       robotApiBaseUrl: sessionSettings.data.robotApiBaseUrl,
       hasKpiApiKey: Boolean(sessionSettings.data.kpiApiKey)
@@ -69,6 +71,9 @@ function updateDataSettings(body) {
   sessionSettings.data.kpiApiBaseUrl = String(body.kpiApiBaseUrl || "");
   sessionSettings.data.robotApiBaseUrl = String(body.robotApiBaseUrl || "");
   sessionSettings.data.dataMode = String(body.dataMode || "mock");
+  if (body.telemetryAdapter) {
+    sessionSettings.data.telemetryAdapter = String(body.telemetryAdapter);
+  }
 }
 
 function clearStoredKeys() {

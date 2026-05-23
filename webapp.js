@@ -35,8 +35,11 @@ const state = {
   },
   settings: {
     ai: { provider: "mock", model: "mock-norfleet-v1", mockMode: true, hasApiKey: false },
-    data: { dataMode: "mock", kpiApiBaseUrl: "", robotApiBaseUrl: "", hasKpiApiKey: false }
-  }
+    data: { dataMode: "mock", telemetryAdapter: "simulated", kpiApiBaseUrl: "", robotApiBaseUrl: "", hasKpiApiKey: false }
+  },
+  predictions: [],
+  calibration: null,
+  persistenceBackend: "unknown"
 };
 
 const SAMPLE_ROBOT_REGISTRY = [
@@ -680,6 +683,173 @@ function setDirty(agentId, key, dirty) {
   else set.delete(key);
 }
 
+async function syncAgentRuntimeFromServer() {
+  try {
+    const rt = await api("/api/agents/runtime");
+    if (Array.isArray(rt.agents) && rt.agents.length) {
+      state.agentBuilderConfig = { ...createDefaultAgentBuilderConfig(), agents: rt.agents };
+    }
+    if (rt.calibration) state.calibration = rt.calibration;
+  } catch {
+    try {
+      const legacy = await api("/api/ai/runtime");
+      if (Array.isArray(legacy.agents) && legacy.agents.length) {
+        state.agentBuilderConfig = { ...createDefaultAgentBuilderConfig(), agents: legacy.agents };
+      }
+      if (legacy.calibration) state.calibration = legacy.calibration;
+      if (legacy.persistenceBackend) state.persistenceBackend = legacy.persistenceBackend;
+    } catch {
+      ensureAgentBuilderConfig();
+    }
+  }
+}
+
+async function saveAgentRuntimeToServer() {
+  if (!state.agentBuilderConfig?.agents) return;
+  await api("/api/agents/runtime", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agentBuilderConfig: state.agentBuilderConfig.agents })
+  });
+}
+
+async function refreshPredictions() {
+  const res = await api("/api/predictions");
+  state.predictions = res.predictions || [];
+  state.calibration = res.calibration || state.calibration;
+  return state.predictions;
+}
+
+function renderPredictionBanner() {
+  const el = byId("pred-marker-banner");
+  if (!el) return;
+  const fleet = currentFleet();
+  const preds = (state.predictions || []).filter(
+    (p) => p.alert && fleet?.robotIds?.includes(p.robotId)
+  );
+  if (!preds.length) {
+    el.style.display = "none";
+    return;
+  }
+  el.style.display = "block";
+  el.innerHTML = preds
+    .map(
+      (p) =>
+        `<strong>${escapeHtml(p.robotId)}</strong> — ${escapeHtml(p.failureMode.replace(/_/g, " "))} · TTF ${escapeHtml(String(p.estimatedTimeToFailureHours))}h · p=${(p.failureProbability * 100).toFixed(0)}%`
+    )
+    .join(" · ");
+}
+
+function miniSparkline(hi) {
+  if (!hi?.length) return "";
+  const vals = hi.map((p) => p.value ?? p);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const range = max - min || 1;
+  const w = 80;
+  const h = 24;
+  const pts = vals
+    .map((v, i) => {
+      const x = (i / Math.max(1, vals.length - 1)) * w;
+      const y = h - ((v - min) / range) * h;
+      return `${x},${y}`;
+    })
+    .join(" ");
+  return `<svg class="fh-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polyline fill="none" stroke="#22d3ee" stroke-width="1.5" points="${pts}"/></svg>`;
+}
+
+async function renderFleetHealth() {
+  const root = byId("fleet-health-root");
+  if (!root) return;
+  const preds = [...(state.predictions || [])].sort(
+    (a, b) => (a.estimatedTimeToFailureHours ?? 999) - (b.estimatedTimeToFailureHours ?? 999)
+  );
+  const rows = await Promise.all(
+    preds.map(async (p) => {
+      let hi = [];
+      try {
+        const health = await api(`/api/robots/${encodeURIComponent(p.robotId)}/health`);
+        hi = health.hiSeries || [];
+      } catch {
+        hi = [];
+      }
+      const sigs = (p.contributingSignals || [])
+        .map((s) => `${s.signal} (${s.weight})`)
+        .join(", ");
+      const riskClass = (p.failureProbability ?? 0) > 0.7 ? "fh-risk-high" : "fh-risk-med";
+      return `<tr>
+        <td><strong>${escapeHtml(p.robotId)}</strong><br><span class="muted">${escapeHtml(p.robotName || "")}</span></td>
+        <td>${escapeHtml(p.failureMode.replace(/_/g, " "))}</td>
+        <td class="${riskClass}">${((p.failureProbability ?? 0) * 100).toFixed(0)}%</td>
+        <td>${p.estimatedTimeToFailureHours ?? "—"}h</td>
+        <td>${((p.healthIndex ?? 0) * 100).toFixed(0)}%</td>
+        <td>${miniSparkline(hi)}</td>
+        <td class="fh-signals">${escapeHtml(sigs || "—")}</td>
+      </tr>`;
+    })
+  );
+  const cal = state.calibration
+    ? Object.entries(state.calibration)
+        .map(([m, c]) => `${m}: p≥${c.minProbability} HI≤${c.alertThreshold}`)
+        .join(" · ")
+    : "Default calibration";
+  root.innerHTML = `
+    <table class="fh-table">
+      <thead><tr>
+        <th>Robot</th><th>Failure mode</th><th>Probability</th><th>TTF</th><th>Health index</th><th>HI trend</th><th>Top signals</th>
+      </tr></thead>
+      <tbody>${rows.length ? rows.join("") : `<tr><td colspan="7" class="muted">No predictions yet — run Fast-forward or wait for telemetry.</td></tr>`}</tbody>
+    </table>
+    <div class="fh-calibration">Calibration (from feedback): ${escapeHtml(cal)} · persistence: ${escapeHtml(state.persistenceBackend)}</div>
+  `;
+  const refreshBtn = byId("fh-refresh-btn");
+  const replayBtn = byId("fh-replay-btn");
+  if (refreshBtn) refreshBtn.onclick = () => refreshFleetHealth().catch((e) => showToast("⚠", e.message));
+  if (replayBtn) replayBtn.onclick = () => runSimReplay(60).catch((e) => showToast("⚠", e.message));
+}
+
+async function refreshFleetHealth() {
+  await refreshPredictions();
+  renderPredictionBanner();
+  await renderFleetHealth();
+}
+
+async function runSimReplay(speed = 60) {
+  const status = byId("fh-replay-status");
+  if (status) status.textContent = "Replaying…";
+  const res = await api("/api/sim/replay", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ speed })
+  });
+  await refreshFleetHealth();
+  if (status) status.textContent = `Sim advanced (${res.speed}×)`;
+  showToast("◉", "Simulation fast-forwarded — check predictions.");
+}
+
+async function submitPredictionFeedback(actionId, outcome) {
+  const rec = getTechnicianRecommendationById(actionId);
+  const payload = {
+    actionId,
+    predictionId: rec?.predictionId,
+    failureMode: rec?.failureMode,
+    outcome,
+    fixWorked: outcome !== "false-alarm",
+    technicianFeedback: `Technician marked ${outcome} for ${rec?.title || actionId}.`
+  };
+  const res = await api("/api/ai/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  state.calibration = res.calibration || state.calibration;
+  state.technicianFeedbackHistory.push({ actionId, outcome, learningUpdate: res.learningUpdate });
+  setTechnicianActionStatus(actionId, "completed");
+  showToast("◇", res.learningUpdate || "Feedback recorded.");
+  await refreshFleetHealth();
+  renderTechnicianReport();
+}
+
 function switchView(id, tabEl) {
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
   document.querySelectorAll(".nav-tab").forEach((t) => t.classList.remove("active"));
@@ -688,6 +858,10 @@ function switchView(id, tabEl) {
   if (tabEl) tabEl.classList.add("active");
   if (id === "technician-report") {
     renderTechnicianReport();
+    return;
+  }
+  if (id === "fleet-health") {
+    refreshFleetHealth().catch((err) => showToast("⚠", err.message));
     return;
   }
   if (id === "agents") {
@@ -1189,6 +1363,7 @@ function applyTechnicianAction(actionId) {
     before: "Pending",
     after: "Applied"
   });
+  saveAgentRuntimeToServer().catch(() => {});
   showToast("◇", msg);
   afterTechnicianReportMutation();
 }
@@ -1320,20 +1495,15 @@ async function analyzeKpiAnomaliesWithAI() {
 }
 
 async function generateAiTechnicianReport() {
-  const analysis = state.technicianReport.lastAnalysis || (await analyzeKpiAnomaliesWithAI());
-  if (!analysis) return;
   const payload = {
-    anomalies: analysis.anomalies || [],
-    activeAgents: state.agentBuilderConfig?.agents || [],
-    robotLogs: state.robots.flatMap((r) => [`${r.id}: status=${r.status}`]),
-    technicianNotes: state.technicianFeedbackHistory,
-    currentWorkflow: state.agentBuilderConfig
+    anomalies: state.technicianReport.lastAnalysis?.anomalies || []
   };
   const res = await api("/api/ai/generate-technician-report", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
+  state.predictions = res.predictions || state.predictions;
   state.technicianReport.generatedSummary = res.reportSummary || null;
   state.technicianReport.generatedActions = Array.isArray(res.actions)
     ? res.actions.map((a, idx) => ({
@@ -1341,11 +1511,15 @@ async function generateAiTechnicianReport() {
         title: a.title || "AI recommendation",
         detail: a.explanation || a.reason || "No explanation provided.",
         severity: a.severity || "Medium",
-        source: a.source || "KPI Monitor",
-        kpiAnomalySource: a.kpiAnomalySource || "KPI Monitor",
+        source: a.source || "Prediction Engine",
+        kpiAnomalySource: a.failureMode || "Predictive",
         affectedRobots: Array.isArray(a.affectedRobots) ? a.affectedRobots.join(", ") : String(a.affectedRobots || "Fleet-wide"),
-        actionType: a.actionType || "Agent workflow update",
+        actionType: a.actionType || "Predictive dispatch",
         buttonLabel: a.buttonLabel || "Apply to Agent Builder",
+        predictionId: a.predictionId,
+        failureMode: a.failureMode,
+        estimatedTimeToFailureHours: a.estimatedTimeToFailureHours,
+        confidence: a.confidence,
         kind:
           String(a.buttonLabel || "").toLowerCase().includes("technician")
             ? "technician_task"
@@ -1358,7 +1532,7 @@ async function generateAiTechnicianReport() {
     : null;
   updateAiUsage(res.metadata, "Generate AI Report");
   renderTechnicianReport();
-  showToast("◇", "AI-generated maintenance actions ready.");
+  showToast("◇", "Predictive dispatch actions ready.");
 }
 
 async function recommendAgentUpdatesWithAI() {
@@ -1387,14 +1561,6 @@ async function recommendAgentUpdatesWithAI() {
   showToast("◇", `${updates.length} agent workflow updates recommended.`);
 }
 
-function getKpiMonitorBridgeNote() {
-  const keys = Object.keys(state.latestSeries || {});
-  if (keys.length === 0) {
-    return "KPI anomaly source: sample Norfleet monitor data. Run KPI Monitor on a fleet to align live series with this view.";
-  }
-  return `KPI Monitor live series: ${keys.slice(0, 6).join(", ")}${keys.length > 6 ? "…" : ""}. Anomaly cards below combine sample and live-style labels.`;
-}
-
 function formatActionStatusLabel(st) {
   if (st === "sent") return "Sent";
   if (st === "applied") return "Applied";
@@ -1417,24 +1583,36 @@ function renderTechnicianReport() {
       action: a.recommendedAction || "Review and approve recommendation"
     })) || SAMPLE_KPI_ANOMALIES;
 
+  const downtimeDisplay = String(sum.downtimeAvoided || "0h").replace(/^~/, "");
   const summaryHtml = `
     <div class="tr-summary-grid">
-      <div class="tr-summary-stat"><div class="val">${sum.totalAnomalies}</div><div class="lbl">Total anomalies detected</div></div>
-      <div class="tr-summary-stat"><div class="val">${sum.recommendedActions}</div><div class="lbl">Recommended actions</div></div>
-      <div class="tr-summary-stat"><div class="val">${sum.selfFixEligible}</div><div class="lbl">Self-fix eligible</div></div>
-      <div class="tr-summary-stat"><div class="val">${sum.techApproval}</div><div class="lbl">Technician approval required</div></div>
-      <div class="tr-summary-stat"><div class="val">~${sum.downtimeAvoided}</div><div class="lbl">Est. downtime avoided</div></div>
+      <div class="tr-summary-stat">
+        <div class="val">${sum.totalAnomalies}</div>
+        <div class="lbl">${sum.recommendedActions} recommended actions</div>
+      </div>
+      <div class="tr-summary-stat">
+        <div class="val">${sum.selfFixEligible} · ${sum.techApproval}</div>
+        <div class="lbl">Self-fix · needs approval</div>
+      </div>
+      <div class="tr-summary-stat">
+        <div class="val">~${escapeHtml(downtimeDisplay)}</div>
+        <div class="lbl">Est. downtime avoided</div>
+      </div>
     </div>`;
+
+  const devMetaHtml = `Provider: ${escapeHtml(displayAiProviderName(state.aiUsage.provider))} · Model: ${escapeHtml(displayAiModelForUi(state.aiUsage.provider, state.aiUsage.model))} · Estimated tokens: ${escapeHtml(String(state.aiUsage.estimatedTokens))} · Estimated cost: ${escapeHtml(state.aiUsage.costEstimate)} · Calls this session: ${escapeHtml(String(state.aiUsage.callsThisSession))} · Last status: ${escapeHtml(state.aiUsage.lastStatus)}`;
 
   const anomalyCards = anomaliesSource.map(
     (a) => `
     <div class="tr-anomaly-card">
-      <div class="kpi-name">${escapeHtml(a.kpi)}</div>
-      <div class="tr-anomaly-row"><span class="lbl">Anomaly detected</span>${escapeHtml(a.anomaly)}</div>
-      <div class="tr-anomaly-row"><span class="lbl">Affected robot / zone</span>${escapeHtml(a.target)}</div>
-      <div class="tr-anomaly-row"><span class="lbl">Severity</span><span class="severity-badge ${trSeverityClass(a.severity)}">${escapeHtml(a.severity)}</span></div>
-      <div class="tr-anomaly-row"><span class="lbl">Likely cause</span>${escapeHtml(a.cause)}</div>
-      <div class="tr-anomaly-row"><span class="lbl">Recommended action</span>${escapeHtml(a.action)}</div>
+      <div class="tr-anomaly-head">
+        <span class="tr-anomaly-kpi">${escapeHtml(a.kpi)}</span>
+        <span class="severity-badge ${trSeverityClass(a.severity)}">${escapeHtml(a.severity)}</span>
+      </div>
+      <p class="tr-anomaly-desc">${escapeHtml(a.anomaly)}</p>
+      <span class="tr-anomaly-meta">${escapeHtml(a.target)}</span>
+      <p class="tr-anomaly-action">${escapeHtml(a.action)}</p>
+      <p class="tr-anomaly-cause">Likely cause: ${escapeHtml(a.cause)}</p>
     </div>`
   ).join("");
 
@@ -1450,6 +1628,18 @@ function renderTechnicianReport() {
           : "Reviewed"
         : "Draft";
     const statusHtml = `<span class="tr-status-pill">${escapeHtml(statusLabel)}</span>`;
+    const predMeta =
+      rec.failureMode && rec.estimatedTimeToFailureHours != null
+        ? `<span class="tr-source-pill">${escapeHtml(rec.failureMode.replace(/_/g, " "))} · TTF ${rec.estimatedTimeToFailureHours}h · conf ${((rec.confidence ?? 0) * 100).toFixed(0)}%</span>`
+        : "";
+    const outcomeBtns =
+      (st === "applied" || st === "sent") && st !== "completed"
+        ? `<div class="tr-outcome-btns">
+            <button type="button" class="tr-btn-ghost" data-tr-outcome="${escapeHtml(rec.id)}" data-outcome="confirmed-failure">Confirmed</button>
+            <button type="button" class="tr-btn-ghost" data-tr-outcome="${escapeHtml(rec.id)}" data-outcome="false-alarm">False alarm</button>
+            <button type="button" class="tr-btn-ghost" data-tr-outcome="${escapeHtml(rec.id)}" data-outcome="fixed-early">Fixed early</button>
+          </div>`
+        : "";
     const primaryDisabled = done || !reviewed ? "disabled" : "";
     const rowClass = done ? "tr-rec-row applied" : "tr-rec-row";
     return `
@@ -1464,8 +1654,10 @@ function renderTechnicianReport() {
           <span class="tr-action-type">${escapeHtml(rec.actionType)}</span>
           <span>KPI anomaly source: ${escapeHtml(rec.kpiAnomalySource)}</span>
           <span>Affected: ${escapeHtml(rec.affectedRobots)}</span>
+          ${predMeta}
           ${statusHtml}
         </div>
+        ${outcomeBtns}
       </div>
       <div class="tr-rec-actions">
         <button type="button" class="tr-action-btn" data-tr-action="${escapeHtml(rec.id)}" ${primaryDisabled}>
@@ -1492,53 +1684,49 @@ function renderTechnicianReport() {
     .join("");
 
   root.innerHTML = `
-    <div class="tr-hero">
+    <header class="tr-intro">
       <h2>Technician Report</h2>
-      <p class="muted">AI-generated maintenance actions from KPI anomalies, agent signals, and technician feedback. This is the action layer: repair recommendations, workflow changes, and self-improving maintenance.</p>
-      <p class="muted" style="margin-top:8px;margin-bottom:0;font-size:11px">${escapeHtml(getKpiMonitorBridgeNote())}</p>
-    </div>
+      <p class="muted">Turn KPI anomalies into reviewable repair actions and agent workflow updates. Generate a report, approve items, then apply or send to the floor.</p>
+    </header>
 
-    <section class="tr-section" aria-labelledby="tr-summary-h">
-      <div class="panel-header" style="margin-bottom:10px">
-        <div class="tr-section-title" id="tr-summary-h">Report summary</div>
-        <span class="panel-badge badge-cyan">Live</span>
+    <section class="tr-block" aria-labelledby="tr-summary-h">
+      <div class="tr-block-head">
+        <h3 class="tr-section-title" id="tr-summary-h">Report summary</h3>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-        <button type="button" class="panel-action-btn" id="tr-generate-btn">Generate AI Report</button>
-        <button type="button" class="panel-action-btn" id="tr-analyze-btn">Analyze KPI Anomalies</button>
-        <button type="button" class="panel-action-btn" id="tr-recommend-btn">Recommend Agent Updates</button>
-        <button type="button" class="panel-action-btn" id="tr-apply-selected-btn">Apply Selected Updates</button>
-        <button type="button" class="panel-action-btn" id="tr-save-feedback-btn">Save Technician Feedback</button>
+      <div class="tr-toolbar">
+        <button type="button" class="tr-btn-primary" id="tr-generate-btn">Generate dispatch report</button>
+        <div class="tr-toolbar-secondary" role="group" aria-label="Report workflow steps">
+          <button type="button" class="tr-btn-ghost" id="tr-replay-btn">Fast-forward (60×)</button>
+          <button type="button" class="tr-btn-ghost" id="tr-analyze-btn">Analyze KPIs</button>
+          <button type="button" class="tr-btn-ghost" id="tr-recommend-btn">Recommend updates</button>
+          <button type="button" class="tr-btn-ghost" id="tr-apply-selected-btn">Apply selected</button>
+          <button type="button" class="tr-btn-ghost" id="tr-save-feedback-btn">Save feedback</button>
+        </div>
       </div>
       ${summaryHtml}
-      <p class="muted" style="margin-top:10px;margin-bottom:0;font-size:11px">
-        Provider: ${escapeHtml(displayAiProviderName(state.aiUsage.provider))} · Model: ${escapeHtml(displayAiModelForUi(state.aiUsage.provider, state.aiUsage.model))} · Estimated tokens: ${escapeHtml(String(state.aiUsage.estimatedTokens))} · Estimated cost: ${escapeHtml(state.aiUsage.costEstimate)} · Calls this session: ${escapeHtml(String(state.aiUsage.callsThisSession))} · Last status: ${escapeHtml(state.aiUsage.lastStatus)}
-      </p>
+      <details class="tr-dev-details">
+        <summary>Developer / model info</summary>
+        <p class="tr-dev-meta">${devMetaHtml}</p>
+      </details>
     </section>
 
-    <section class="tr-section" aria-labelledby="tr-kpi-h">
-      <div class="panel-header" style="margin-bottom:10px">
-        <div class="tr-section-title" id="tr-kpi-h">KPI anomaly insights</div>
-        <span class="panel-badge badge-purple">KPI Monitor</span>
+    <section class="tr-block" aria-labelledby="tr-kpi-h">
+      <div class="tr-block-head">
+        <h3 class="tr-section-title" id="tr-kpi-h">KPI anomaly insights</h3>
+        <button type="button" class="tr-link-btn" id="tr-open-kpi-monitor">KPI Monitor →</button>
       </div>
       <div class="tr-kpi-anomaly-grid">${anomalyCards}</div>
     </section>
 
-    <section class="tr-section" aria-labelledby="tr-rec-h">
-      <div class="panel-header" style="margin-bottom:10px">
-        <div class="tr-section-title" id="tr-rec-h">Action recommendations / to-do</div>
-        <span class="panel-badge badge-cyan">Queue</span>
-      </div>
-      <p class="muted" style="margin-bottom:12px">Select rows to mark reviewed. Use Implement / Send to Technician / Apply to Agent Builder to close the loop.</p>
+    <section class="tr-block" aria-labelledby="tr-rec-h">
+      <h3 class="tr-section-title" id="tr-rec-h">Action recommendations</h3>
+      <p class="muted" style="margin:8px 0 12px;font-size:12px">Mark reviewed, then apply or send each action.</p>
       <div class="tr-rec-list">${recRows}</div>
     </section>
 
-    <section class="tr-section" aria-labelledby="tr-sf-h">
-      <div class="panel-header" style="margin-bottom:10px">
-        <div class="tr-section-title" id="tr-sf-h">Self-fix / agent update suggestions</div>
-        <span class="panel-badge badge-purple">Agent workflow update</span>
-      </div>
-      <p class="muted" style="margin-bottom:12px">Apply changes directly into the shared Agentic AI Builder state and Overview workflow.</p>
+    <section class="tr-block" aria-labelledby="tr-sf-h">
+      <h3 class="tr-section-title" id="tr-sf-h">Self-fix suggestions</h3>
+      <p class="muted" style="margin:8px 0 12px;font-size:12px">Eligible items sync to Agentic AI Builder when applied.</p>
       <div class="tr-selffix-grid">${selfFixCards}</div>
     </section>
   `;
@@ -1557,11 +1745,22 @@ function renderTechnicianReport() {
     };
   });
 
+  root.querySelectorAll("[data-tr-outcome]").forEach((btn) => {
+    btn.onclick = () => submitPredictionFeedback(btn.dataset.trOutcome, btn.dataset.outcome).catch((e) => showToast("⚠", e.message));
+  });
+
   root.querySelectorAll("[data-tr-action]").forEach((btn) => {
     btn.onclick = () => applyTechnicianAction(btn.dataset.trAction);
   });
 
+  const kpiLink = byId("tr-open-kpi-monitor");
+  if (kpiLink) {
+    kpiLink.onclick = () => switchView("monitor", getNavTab("monitor"));
+  }
+
   byId("tr-generate-btn").onclick = () => generateAiTechnicianReport().catch((e) => showToast("⚠", e.message));
+  const trReplay = byId("tr-replay-btn");
+  if (trReplay) trReplay.onclick = () => runSimReplay(60).catch((e) => showToast("⚠", e.message));
   byId("tr-analyze-btn").onclick = () =>
     analyzeKpiAnomaliesWithAI()
       .then(() => {
@@ -2386,6 +2585,8 @@ function updateSummary(summary) {
 async function loadInitial() {
   state.robots = await api("/api/robots");
   state.fleets = await api("/api/fleets");
+  await syncAgentRuntimeFromServer();
+  await refreshPredictions().catch(() => {});
   renderRobots();
   renderFleets();
 }
@@ -2474,6 +2675,10 @@ async function loadMetricsAndStream() {
   state.stream.onmessage = (event) => {
     const data = JSON.parse(event.data);
     state.lastMetricsSnapshot = { fleetId: data.fleetId, kpis: data.kpis, series: data.series };
+    if (data.predictions) {
+      state.predictions = data.predictions;
+      renderPredictionBanner();
+    }
     syncCharts(data.series);
     renderKpis(data.kpis);
     updateSummary(data.summary);
@@ -2515,6 +2720,8 @@ function bindEvents() {
   };
 }
 
+window.runSimReplay = runSimReplay;
+window.submitPredictionFeedback = submitPredictionFeedback;
 window.switchView = switchView;
 window.switchAgentSubView = switchAgentSubView;
 window.selectAgent = selectAgent;
@@ -2525,6 +2732,9 @@ window.createAgentFromRecommendation = createAgentFromRecommendation;
 window.updateAgentFromRecommendation = updateAgentFromRecommendation;
 window.setTechnicianReviewed = setTechnicianReviewed;
 
+setInterval(() => {
+  refreshPredictions().then(() => renderPredictionBanner()).catch(() => {});
+}, 8000);
 setInterval(updateClock, 1000);
 updateClock();
 bindEvents();

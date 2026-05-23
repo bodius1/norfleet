@@ -982,17 +982,16 @@
     .technician-report {
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 0;
     }
 
-    .tr-hero {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 16px 18px;
+    .tr-intro {
+      padding: 0 0 14px;
+      margin-bottom: 14px;
+      border-bottom: 1px solid var(--border);
     }
 
-    .tr-hero h2 {
+    .tr-intro h2 {
       margin: 0 0 6px;
       font-size: 16px;
       font-weight: 700;
@@ -1001,51 +1000,31 @@
       letter-spacing: 0.5px;
     }
 
-    .tr-hero .muted {
+    .tr-intro .muted {
       margin: 0;
-      max-width: 720px;
+      max-width: 640px;
       line-height: 1.5;
+      font-size: 13px;
     }
 
-    .tr-summary-grid {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+    .tr-block {
+      padding: 0 0 18px;
+      margin-bottom: 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tr-block:last-child {
+      margin-bottom: 0;
+      padding-bottom: 0;
+      border-bottom: none;
+    }
+
+    .tr-block-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       gap: 10px;
-    }
-
-    .tr-summary-stat {
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px 14px;
-      text-align: center;
-    }
-
-    .tr-summary-stat .val {
-      font-size: 22px;
-      font-weight: 700;
-      font-family: var(--font-mono);
-      color: var(--accent);
-      line-height: 1.2;
-    }
-
-    .tr-summary-stat .lbl {
-      font-size: 10px;
-      font-family: var(--font-mono);
-      color: var(--text3);
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      margin-top: 6px;
-    }
-
-    .tr-section {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 18px;
-    }
-
-    .tr-section .panel-header {
+      flex-wrap: wrap;
       margin-bottom: 12px;
     }
 
@@ -1056,6 +1035,142 @@
       letter-spacing: 0.6px;
       text-transform: uppercase;
       color: var(--text);
+      margin: 0;
+    }
+
+    .tr-link-btn {
+      appearance: none;
+      border: none;
+      background: none;
+      padding: 0;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--accent);
+      letter-spacing: 0.4px;
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+
+    .tr-link-btn:hover {
+      color: #6cf3ff;
+    }
+
+    .tr-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .tr-toolbar-secondary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding-left: 2px;
+    }
+
+    .tr-btn-primary {
+      appearance: none;
+      border: 1px solid rgba(0, 229, 255, 0.55);
+      background: rgba(0, 229, 255, 0.14);
+      color: var(--accent);
+      border-radius: 8px;
+      padding: 9px 16px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .tr-btn-primary:hover {
+      background: rgba(0, 229, 255, 0.22);
+      box-shadow: 0 0 14px rgba(0, 229, 255, 0.18);
+    }
+
+    .tr-btn-ghost {
+      appearance: none;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text2);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      letter-spacing: 0.35px;
+      cursor: pointer;
+      transition: color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .tr-btn-ghost:hover {
+      color: var(--accent);
+      border-color: var(--border2);
+      background: rgba(0, 229, 255, 0.04);
+    }
+
+    .tr-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .tr-summary-stat {
+      padding: 4px 0;
+      text-align: left;
+    }
+
+    .tr-summary-stat .val {
+      font-size: 24px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: var(--accent);
+      line-height: 1.15;
+    }
+
+    .tr-summary-stat .lbl {
+      font-size: 10px;
+      font-family: var(--font-mono);
+      color: var(--text3);
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      margin-top: 4px;
+    }
+
+    .tr-dev-details {
+      margin-top: 12px;
+      font-size: 11px;
+      color: var(--text3);
+    }
+
+    .tr-dev-details summary {
+      cursor: pointer;
+      font-family: var(--font-mono);
+      letter-spacing: 0.35px;
+      color: var(--text2);
+      list-style: none;
+      user-select: none;
+    }
+
+    .tr-dev-details summary::-webkit-details-marker { display: none; }
+
+    .tr-dev-details summary::before {
+      content: "▸ ";
+      color: var(--accent);
+    }
+
+    .tr-dev-details[open] summary::before {
+      content: "▾ ";
+    }
+
+    .tr-dev-details .tr-dev-meta {
+      margin: 8px 0 0;
+      line-height: 1.55;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text3);
     }
 
     .tr-kpi-anomaly-grid {
@@ -1065,36 +1180,58 @@
     }
 
     .tr-anomaly-card {
-      background: var(--bg2);
-      border: 1px solid var(--border2);
-      border-radius: 10px;
-      padding: 12px 14px;
+      background: rgba(18, 22, 31, 0.65);
+      border-radius: 8px;
+      padding: 10px 12px;
+      border: none;
+      box-shadow: inset 0 0 0 1px var(--border);
     }
 
-    .tr-anomaly-card .kpi-name {
-      font-size: 12px;
-      font-weight: 700;
-      font-family: var(--font-mono);
-      color: var(--accent);
-      margin-bottom: 8px;
-    }
-
-    .tr-anomaly-row {
-      font-size: 12px;
-      color: var(--text2);
-      line-height: 1.45;
+    .tr-anomaly-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
       margin-bottom: 4px;
     }
 
-    .tr-anomaly-row:last-child { margin-bottom: 0; }
+    .tr-anomaly-kpi {
+      font-size: 13px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: var(--text);
+      letter-spacing: 0.3px;
+    }
 
-    .tr-anomaly-row span.lbl {
-      color: var(--text3);
+    .tr-anomaly-desc {
+      margin: 0 0 6px;
+      font-size: 12px;
+      color: var(--text2);
+      line-height: 1.4;
+    }
+
+    .tr-anomaly-meta {
+      display: inline-block;
       font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
-      display: block;
-      margin-bottom: 2px;
+      font-family: var(--font-mono);
+      color: var(--text3);
+      letter-spacing: 0.3px;
+      margin-bottom: 8px;
+    }
+
+    .tr-anomaly-action {
+      margin: 0 0 4px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      line-height: 1.4;
+    }
+
+    .tr-anomaly-cause {
+      margin: 0;
+      font-size: 11px;
+      color: var(--text3);
+      line-height: 1.4;
     }
 
     .tr-rec-list {
@@ -1108,15 +1245,15 @@
       grid-template-columns: 28px 1fr auto;
       gap: 10px 12px;
       align-items: start;
-      background: var(--bg2);
-      border: 1px solid var(--border2);
-      border-radius: 10px;
-      padding: 12px 14px;
+      background: rgba(18, 22, 31, 0.5);
+      border-radius: 8px;
+      padding: 10px 12px;
+      box-shadow: inset 0 0 0 1px var(--border);
     }
 
     .tr-rec-row.applied {
       opacity: 0.85;
-      border-color: rgba(0, 229, 255, 0.2);
+      box-shadow: inset 0 0 0 1px rgba(0, 229, 255, 0.2);
     }
 
     .tr-rec-row .nf-checkbox {
@@ -1238,10 +1375,10 @@
     }
 
     .tr-selffix-card {
-      background: var(--bg2);
-      border: 1px solid rgba(0, 229, 255, 0.18);
-      border-radius: 10px;
-      padding: 14px;
+      background: rgba(18, 22, 31, 0.5);
+      border-radius: 8px;
+      padding: 10px 12px;
+      box-shadow: inset 0 0 0 1px rgba(0, 229, 255, 0.15);
     }
 
     .tr-selffix-card p {
@@ -1293,12 +1430,58 @@
       justify-content: center;
     }
 
-    @media (max-width: 1100px) {
-      .tr-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .tr-outcome-btns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+  /* Fleet Health */
+    .fh-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    .fh-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .fh-table th, .fh-table td {
+      padding: 10px 8px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: middle;
+    }
+    .fh-table th { color: var(--text2); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .fh-risk-high { color: #f87171; font-weight: 700; }
+    .fh-risk-med { color: #fbbf24; }
+    .fh-spark { width: 80px; height: 28px; background: rgba(255,255,255,0.04); border-radius: 4px; }
+    .fh-signals { font-size: 11px; color: var(--text2); max-width: 220px; }
+    .fh-calibration {
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.03);
+      border-radius: 8px;
+      font-size: 12px;
+      color: var(--text2);
+    }
+    .pred-marker-banner {
+      margin: 8px 0 12px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: rgba(248,113,113,0.12);
+      border: 1px solid rgba(248,113,113,0.35);
+      font-size: 12px;
+    }
+
+    @media (max-width: 900px) {
+      .tr-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
     @media (max-width: 720px) {
-      .tr-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .tr-summary-grid { grid-template-columns: 1fr; }
+      .tr-toolbar { flex-direction: column; align-items: stretch; }
+      .tr-toolbar-secondary { padding-left: 0; }
       .tr-rec-row { grid-template-columns: 1fr; }
       .tr-rec-actions { flex-direction: row; flex-wrap: wrap; min-width: 0; }
     }
@@ -1738,6 +1921,7 @@
   <nav class="nav-bar">
     <div class="nav-tab active" data-view="builder" onclick="switchView('builder', this)"><span>⬡</span>Fleet Builder</div>
     <div class="nav-tab" data-view="monitor" onclick="switchView('monitor', this)"><span>◈</span>KPI Monitor</div>
+    <div class="nav-tab" data-view="fleet-health" onclick="switchView('fleet-health', this)"><span>◉</span>Fleet Health</div>
     <div class="nav-tab" data-view="agents" onclick="switchView('agents', this)"><span>◇</span>AI Agents</div>
     <div class="nav-tab" data-view="technician-report" onclick="switchView('technician-report', this)"><span>✦</span>Technician Report</div>
   </nav>
@@ -1806,6 +1990,7 @@
           <button class="panel-action-btn" type="button" id="analyze-with-ai-btn">Analyze with AI</button>
         </div>
         <p class="muted" id="status">Choose a fleet, run AI detection, then watch live series.</p>
+        <div id="pred-marker-banner" class="pred-marker-banner" style="display:none"></div>
         <div class="kpi-list" id="kpi-list"></div>
         <div class="stat-row">
           <div class="stat-mini"><div class="stat-mini-val" id="sum-total">0</div><div class="stat-mini-lbl">Robots</div></div>
@@ -1814,6 +1999,21 @@
           <div class="stat-mini"><div class="stat-mini-val" id="sum-charging">0</div><div class="stat-mini-lbl">Charging</div></div>
         </div>
         <div class="charts" id="charts"></div>
+      </section>
+    </div>
+
+    <div id="view-fleet-health" class="view">
+      <section class="panel">
+        <div class="panel-header">
+          <div class="panel-title">◉ Predictive Fleet Health</div>
+          <span class="panel-badge badge-cyan">Prediction</span>
+        </div>
+        <div class="fh-toolbar">
+          <button type="button" class="tr-btn-primary" id="fh-refresh-btn">Refresh predictions</button>
+          <button type="button" class="tr-btn-ghost" id="fh-replay-btn">Fast-forward sim (60×)</button>
+          <span class="muted" id="fh-replay-status"></span>
+        </div>
+        <div id="fleet-health-root"></div>
       </section>
     </div>
 

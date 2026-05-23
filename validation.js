@@ -32,7 +32,22 @@ function validateRootCauseInput(body) {
 function validateFeedbackInput(body) {
   const b = body || {};
   if (!b.actionId) return { ok: false, error: "actionId is required" };
-  if (typeof b.fixWorked !== "boolean") return { ok: false, error: "fixWorked must be boolean" };
+  const outcomes = ["confirmed-failure", "false-alarm", "fixed-early"];
+  if (b.outcome !== undefined && !outcomes.includes(b.outcome)) {
+    return { ok: false, error: "outcome must be confirmed-failure, false-alarm, or fixed-early" };
+  }
+  if (b.fixWorked !== undefined && typeof b.fixWorked !== "boolean") {
+    return { ok: false, error: "fixWorked must be boolean" };
+  }
+  return { ok: true };
+}
+
+function validateReplayInput(body) {
+  const b = body || {};
+  const speed = Number(b.speed);
+  if (b.speed !== undefined && (!Number.isFinite(speed) || speed < 1 || speed > 360)) {
+    return { ok: false, error: "speed must be between 1 and 360" };
+  }
   return { ok: true };
 }
 
@@ -41,5 +56,6 @@ module.exports = {
   validateTechnicianReportInput,
   validateRecommendUpdatesInput,
   validateRootCauseInput,
-  validateFeedbackInput
+  validateFeedbackInput,
+  validateReplayInput
 };

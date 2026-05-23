@@ -16,15 +16,23 @@ const {
 } = require("./config/settings");
 const runtimeStore = require("./state/runtimeStore");
 const {
+  createPlatform,
+  cacheKey,
+  getCachedInstruction,
+  setCachedInstruction
+} = require("./services/norfleetPlatform");
+const {
   validateAnalyzeKpisInput,
   validateTechnicianReportInput,
   validateRecommendUpdatesInput,
   validateRootCauseInput,
-  validateFeedbackInput
+  validateFeedbackInput,
+  validateReplayInput
 } = require("./validation");
 
 const app = express();
 const PORT = config.env.PORT;
+const platform = createPlatform();
 
 app.use(cors());
 app.use(express.json());
@@ -42,15 +50,7 @@ app.use(
 app.use("/api/settings", requireAdminIfConfigured);
 app.use("/api/tools", requireAdminIfConfigured);
 
-runtimeStore.setActiveAgentsRuntime(createAgentDefinitions());
-
-const runtimeTools = createRuntimeTools({
-  robots: runtimeStore.getRobots(),
-  fleets: runtimeStore.getFleets(),
-  fleetHistory: runtimeStore.getFleetHistoryRef(),
-  ticketStore: runtimeStore.getTechnicianTickets(),
-  feedbackStore: runtimeStore.getTechnicianFeedbackHistory()
-});
+runtimeStore.init(platform.repo);
 
 const modelToKpis = {
   Stretch: ["Throughput", "Cycle Time", "Uptime", "Battery Health"],
@@ -76,32 +76,16 @@ function baselineForKpi(kpi) {
   return randomBetween(1, 10);
 }
 
-/** Demo robots + fleet so the MVP shows KPI tags and live charts on first load */
-function seedExampleFleet() {
-  const demoRobots = [
-    { id: "R-001", name: "Induction Alpha", model: "Stretch", warehouseZone: "A", taskProfile: "Multi-SKU pick", status: "active" },
-    { id: "R-002", name: "Aisle Runner 12", model: "LocusBot", warehouseZone: "B", taskProfile: "Transport relay", status: "active" },
-    { id: "R-003", name: "Sort Cell 3", model: "Chuck", warehouseZone: "C", taskProfile: "Sortation", status: "idle" },
-    { id: "R-004", name: "Outbound Cart", model: "CartConnect", warehouseZone: "D", taskProfile: "Cart-to-station", status: "charging" }
-  ];
-  demoRobots.forEach((r) => runtimeStore.addRobot({ ...r }));
+platform.seedExampleFleet(baselineForKpi);
+platform.start();
 
-  const kpis = Array.from(
-    new Set(demoRobots.flatMap((r) => modelToKpis[r.model] || ["Throughput", "Uptime"]))
-  );
-  const demoFleet = {
-    id: "F-001",
-    name: "Example — Sort Center East Wing",
-    robotIds: demoRobots.map((r) => r.id),
-    kpis,
-    createdAt: new Date().toISOString(),
-    isExample: true
-  };
-  runtimeStore.addFleet(demoFleet);
-  runtimeStore.ensureHistory(demoFleet.id, demoFleet.kpis, baselineForKpi);
-}
-
-seedExampleFleet();
+const runtimeTools = createRuntimeTools({
+  robots: runtimeStore.getRobots(),
+  fleets: runtimeStore.getFleets(),
+  fleetHistory: runtimeStore.getFleetHistoryRef(),
+  ticketStore: runtimeStore.getTechnicianTickets(),
+  feedbackStore: runtimeStore.getTechnicianFeedbackHistory()
+});
 
 function normalizeSeverity(v) {
   const s = String(v || "").toLowerCase();
@@ -292,10 +276,70 @@ app.post("/api/settings/clear-keys", (_req, res) => {
 app.get("/api/ai/runtime", (_req, res) => {
   const calls = runtimeStore.getAiSessionCalls();
   return res.json({
-    agents: runtimeStore.getActiveAgentsRuntime(),
+    agents: platform.getAgentRuntimeConfig(),
+    agentBuilderConfig: platform.getAgentRuntimeConfig(),
     sessionCalls: calls.length,
-    lastCall: calls[calls.length - 1] || null
+    lastCall: calls[calls.length - 1] || null,
+    calibration: platform.getCalibration(),
+    persistenceBackend: platform.repo.backend
   });
+});
+
+app.get("/api/agents/runtime", (_req, res) => {
+  return res.json({ agents: platform.getAgentRuntimeConfig(), calibration: platform.getCalibration() });
+});
+
+app.put("/api/agents/runtime", (req, res) => {
+  const body = req.body || {};
+  if (body.agentBuilderConfig || body.agents) {
+    platform.setAgentRuntimeConfig(body.agentBuilderConfig || body.agents);
+  }
+  return res.json({ ok: true, agents: platform.getAgentRuntimeConfig() });
+});
+
+app.get("/api/predictions", (_req, res) => {
+  const preds = platform
+    .getAllLatestPredictions()
+    .sort((a, b) => (a.estimatedTimeToFailureHours ?? 999) - (b.estimatedTimeToFailureHours ?? 999));
+  res.json({ predictions: preds, calibration: platform.getCalibration() });
+});
+
+app.get("/api/robots/:id/health", (req, res) => {
+  const robotId = req.params.id;
+  const pred = platform.getLatestPrediction(robotId);
+  const hiSeries = platform.timeSeries.getHotSeries(robotId, "vibrationRms");
+  if (!pred) {
+    platform.runPredictionForRobot(robotId, platform.simulator.getSimTimeMs());
+  }
+  const latest = platform.getLatestPrediction(robotId);
+  if (!latest) return res.status(404).json({ error: "robot not found or insufficient telemetry" });
+  res.json({
+    robotId,
+    healthIndex: latest.healthIndex,
+    prediction: latest,
+    hiSeries: platform.timeSeries.getHotSeries(robotId, "vibrationRms").slice(-30)
+  });
+});
+
+app.post("/api/telemetry/ingest", (req, res) => {
+  const reading = req.body || {};
+  if (!reading.robotId || !reading.signals) {
+    return res.status(400).json({ error: "robotId and signals required" });
+  }
+  reading.ts = reading.ts || Date.now();
+  platform.timeSeries.write(reading);
+  platform.runPredictionForRobot(reading.robotId, reading.ts);
+  res.json({ ok: true });
+});
+
+app.post("/api/sim/replay", (req, res) => {
+  const valid = validateReplayInput(req.body || {});
+  if (!valid.ok) return res.status(400).json({ error: valid.error });
+  const speed = Number(req.body.speed) || 60;
+  platform.setReplaySpeed(speed);
+  for (let i = 0; i < Math.min(120, speed); i += 1) platform.simulator.tick();
+  platform.runAllPredictions();
+  res.json({ ok: true, speed: platform.adapter.getReplaySpeed?.() || speed, simTimeMs: platform.simulator.getSimTimeMs() });
 });
 
 app.post("/api/ai/analyze-kpis", async (req, res) => {
@@ -362,41 +406,65 @@ app.post("/api/ai/generate-technician-report", async (req, res) => {
   const payload = req.body || {};
   const valid = validateTechnicianReportInput(payload);
   if (!valid.ok) return res.status(400).json({ error: valid.error });
-  const fallback = fallbackTechnicianReport(payload);
+
+  const openPreds = platform.getAllLatestPredictions().filter((p) => p.alert);
+  const dispatchActions = openPreds.map((p) => platform.buildDeterministicDispatch(p));
+  const fallback = {
+    reportSummary: {
+      totalAnomalies: openPreds.length,
+      recommendedActions: dispatchActions.length,
+      autoFixEligible: dispatchActions.filter((a) => a.selfFix).length,
+      technicianApprovalRequired: dispatchActions.length,
+      estimatedDowntimeAvoided: `${Math.max(6, dispatchActions.length * 6)}h`
+    },
+    actions: dispatchActions.map((a) => ({
+      id: a.id,
+      title: a.title,
+      source: a.source,
+      severity: a.severity,
+      affectedRobots: [a.robotId],
+      actionType: "Predictive dispatch",
+      explanation: a.detail,
+      buttonLabel: a.buttonLabel,
+      autoFixEligible: a.selfFix,
+      requiresHumanApproval: true,
+      predictionId: a.predictionId,
+      failureMode: a.failureMode,
+      estimatedTimeToFailureHours: a.estimatedTimeToFailureHours,
+      confidence: a.confidence
+    })),
+    predictions: openPreds
+  };
+
+  const ck = cacheKey({ preds: openPreds.map((p) => p.id) });
+  const cached = getCachedInstruction(ck);
+  if (cached) {
+    return res.json({ ...cached, metadata: { cached: true }, predictions: openPreds });
+  }
+
   const auth = resolveProviderAuth();
-  const out = await generateJson({
-    provider: auth.provider,
-    model: auth.model,
-    apiKey: auth.apiKey,
-    role: "Norfleet Technician Report Generator",
-    task: "Generate AI-generated maintenance actions from anomalies and workflow context.",
-    data: {
-      anomalies: payload.anomalies || [],
-      activeAgents: payload.activeAgents || [],
-      robotLogs: payload.robotLogs || [],
-      technicianNotes: payload.technicianNotes || runtimeStore.getTechnicianFeedbackHistory(),
-      currentWorkflow: payload.currentWorkflow || {}
-    },
-    constraints: [
-      "Valid JSON only.",
-      "Include source, severity, action type, and approval flags.",
-      "Prefer safe, reviewable actions."
-    ],
-    outputSchema: {
-      reportSummary: {
-        totalAnomalies: "number",
-        recommendedActions: "number",
-        autoFixEligible: "number",
-        technicianApprovalRequired: "number",
-        estimatedDowntimeAvoided: "string"
-      },
-      actions: ["object"]
-    },
-    examples: [fallback],
-    schemaFallback: fallback
-  });
-  runtimeStore.pushAiSessionCall({ endpoint: "generate-technician-report", ...out.meta, status: "ok", timestamp: new Date().toISOString() });
-  return res.json({ ...out.data, metadata: out.meta });
+  let narrative = null;
+  if (auth.provider !== "mock" && dispatchActions.length) {
+    const out = await generateJson({
+      provider: auth.provider,
+      model: auth.model,
+      apiKey: auth.apiKey,
+      role: "Norfleet repair instruction writer",
+      task: "Turn deterministic dispatch actions into human-readable repair steps. JSON {instructions: string[]}",
+      data: { actions: dispatchActions },
+      constraints: ["Valid JSON only", "Do not change dispatch decisions"],
+      outputSchema: { instructions: ["string"] },
+      examples: [{ instructions: ["Inspect bearing housing on R-002", "Schedule 30-min vibration baseline recheck"] }],
+      schemaFallback: { instructions: dispatchActions.map((a) => a.detail) }
+    });
+    runtimeStore.pushAiSessionCall({ endpoint: "generate-technician-report", ...out.meta, status: "ok", timestamp: new Date().toISOString() });
+    narrative = out.data;
+  }
+
+  const response = { ...fallback, narrative, metadata: { provider: auth.provider, deterministic: true } };
+  setCachedInstruction(ck, response);
+  platform.repo.addTechnicianReport({ id: `TR-${Date.now()}`, ...response, createdAt: new Date().toISOString() });
+  return res.json(response);
 });
 
 app.post("/api/ai/recommend-agent-updates", async (req, res) => {
@@ -476,20 +544,32 @@ app.post("/api/ai/feedback", (req, res) => {
   const payload = req.body || {};
   const valid = validateFeedbackInput(payload);
   if (!valid.ok) return res.status(400).json({ error: valid.error });
+
+  const outcome = payload.outcome || (payload.fixWorked ? "confirmed-failure" : "false-alarm");
+  platform.recordFeedback({
+    actionId: payload.actionId,
+    predictionId: payload.predictionId,
+    failureMode: payload.failureMode,
+    outcome,
+    technicianFeedback: payload.technicianFeedback || "",
+    fixWorked: Boolean(payload.fixWorked)
+  });
+
   const saved = runtimeTools.saveTechnicianFeedback({
     actionId: payload.actionId,
     technicianFeedback: payload.technicianFeedback || "",
     fixWorked: Boolean(payload.fixWorked),
     beforeAfter: payload.beforeAfterKpiValues || {}
   });
+
   return res.json({
-    learningUpdate: payload.fixWorked
-      ? "Feedback indicates fix success; future recommendations will prioritize this action pattern."
-      : "Feedback indicates limited efficacy; future recommendations will de-prioritize this action unless confidence increases.",
-    futureRecommendationChange: payload.fixWorked
-      ? "Increase confidence for similar action types by +0.04."
-      : "Require additional evidence before proposing this action.",
-    memorySaved: saved.saved
+    learningUpdate:
+      outcome === "false-alarm"
+        ? "False alarm recorded; calibration tightened to reduce repeat alerts."
+        : "Outcome recorded; calibration updated for this failure mode.",
+    futureRecommendationChange: `Calibration: ${JSON.stringify(platform.getCalibration())}`,
+    memorySaved: saved.saved,
+    calibration: platform.getCalibration()
   });
 });
 
@@ -585,7 +665,8 @@ app.get("/api/stream", (req, res) => {
       fleetId: fleet.id,
       summary: summarizeFleet(fleet),
       kpis: fleet.kpis,
-      series: runtimeStore.getFleetHistory(fleet.id)
+      series: runtimeStore.getFleetHistory(fleet.id),
+      predictions: platform.getAllLatestPredictions().filter((p) => fleet.robotIds.includes(p.robotId))
     };
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
   };

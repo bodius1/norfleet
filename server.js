@@ -27,8 +27,11 @@ const {
   validateRecommendUpdatesInput,
   validateRootCauseInput,
   validateFeedbackInput,
-  validateReplayInput
+  validateReplayInput,
+  validateDispatchFeedbackInput
 } = require("./validation");
+const { buildTechnicianDispatchReport } = require("./services/technicianDispatchReport");
+const { createDispatchWorkflow } = require("./services/dispatchWorkflow");
 
 const app = express();
 const PORT = config.env.PORT;
@@ -51,6 +54,8 @@ app.use("/api/settings", requireAdminIfConfigured);
 app.use("/api/tools", requireAdminIfConfigured);
 
 runtimeStore.init(platform.repo);
+
+const dispatchWorkflow = createDispatchWorkflow(platform.repo);
 
 const modelToKpis = {
   Stretch: ["Throughput", "Cycle Time", "Uptime", "Battery Health"],
@@ -295,6 +300,70 @@ app.put("/api/agents/runtime", (req, res) => {
     platform.setAgentRuntimeConfig(body.agentBuilderConfig || body.agents);
   }
   return res.json({ ok: true, agents: platform.getAgentRuntimeConfig() });
+});
+
+app.get("/api/technician/dispatch-report", (_req, res) => {
+  platform.runAllPredictions();
+  const predictions = platform.getAllLatestPredictions();
+  const robots = runtimeStore.getRobots();
+  const agents = platform.getAgentRuntimeConfig();
+  const auth = resolveProviderAuth();
+  const report = buildTechnicianDispatchReport({
+    predictions,
+    robots,
+    anomalies: platform.repo.getAnomalies(),
+    agents,
+    feedback: dispatchWorkflow.getFeedback(),
+    dispatchStates: dispatchWorkflow.getStates(),
+    modelInfo: {
+      provider: auth.provider,
+      model: auth.model,
+      persistenceBackend: platform.repo.backend,
+      calibration: platform.getCalibration()
+    },
+    fleetId: runtimeStore.getFleets()[0]?.id || "fleet-default",
+    siteId: "localhost-demo"
+  });
+  res.json(report);
+});
+
+function dispatchBody(req) {
+  return { ...(req.body || {}), technicianId: req.body?.technicianId || "technician" };
+}
+
+app.post("/api/dispatch/:dispatchId/acknowledge", (req, res) => {
+  const state = dispatchWorkflow.acknowledge(req.params.dispatchId, dispatchBody(req));
+  res.json({ ok: true, workflow: state });
+});
+
+app.post("/api/dispatch/:dispatchId/defer", (req, res) => {
+  const state = dispatchWorkflow.defer(req.params.dispatchId, dispatchBody(req));
+  res.json({ ok: true, workflow: state });
+});
+
+app.post("/api/dispatch/:dispatchId/resolve", (req, res) => {
+  const state = dispatchWorkflow.resolve(req.params.dispatchId, dispatchBody(req));
+  res.json({ ok: true, workflow: state });
+});
+
+app.post("/api/dispatch/:dispatchId/false-alarm", (req, res) => {
+  const state = dispatchWorkflow.falseAlarm(req.params.dispatchId, dispatchBody(req));
+  res.json({ ok: true, workflow: state });
+});
+
+app.post("/api/dispatch/:dispatchId/feedback", (req, res) => {
+  const valid = validateDispatchFeedbackInput(req.body || {});
+  if (!valid.ok) return res.status(400).json({ error: valid.error });
+  try {
+    const record = dispatchWorkflow.recordFeedback(
+      req.params.dispatchId,
+      { ...req.body, dispatchId: req.params.dispatchId },
+      (payload) => platform.recordFeedback(payload)
+    );
+    return res.json({ ok: true, feedback: record, calibration: platform.getCalibration() });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
 });
 
 app.get("/api/predictions", (_req, res) => {

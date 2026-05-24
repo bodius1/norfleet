@@ -8,13 +8,22 @@ const DEFAULT_CALIBRATION = {
   pick_drift: { alertThreshold: 0.4, minProbability: 0.4, minConfidence: 0.35, horizonHours: 48, falseAlarms: 0, confirmed: 0 }
 };
 
+function cloneCalibration(source = {}) {
+  const cal = {};
+  const modes = new Set([...Object.keys(DEFAULT_CALIBRATION), ...Object.keys(source || {})]);
+  modes.forEach((mode) => {
+    cal[mode] = { ...(DEFAULT_CALIBRATION[mode] || {}), ...(source[mode] || {}) };
+  });
+  return cal;
+}
+
 function loadCalibration(repo) {
-  const stored = repo.getCalibration();
-  return { ...DEFAULT_CALIBRATION, ...stored };
+  const stored = repo.getCalibration() || {};
+  return cloneCalibration(stored);
 }
 
 function applyOutcome(calibration, failureMode, outcome) {
-  const cal = { ...calibration };
+  const cal = cloneCalibration(calibration);
   const mode = failureMode || "bearing_wear";
   if (!cal[mode]) cal[mode] = { ...DEFAULT_CALIBRATION.bearing_wear };
 
@@ -41,6 +50,7 @@ function getFalseAlarmRate(calibration) {
 
 module.exports = {
   DEFAULT_CALIBRATION,
+  cloneCalibration,
   loadCalibration,
   applyOutcome,
   getFalseAlarmRate

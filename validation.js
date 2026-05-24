@@ -51,11 +51,24 @@ function validateReplayInput(body) {
   return { ok: true };
 }
 
+function validateDispatchFeedbackInput(body) {
+  const b = body || {};
+  const outcomes = ["confirmed_failure", "fixed_early", "false_alarm", "not_enough_evidence"];
+  if (!b.outcome || !outcomes.includes(b.outcome)) {
+    return { ok: false, error: `outcome must be one of: ${outcomes.join(", ")}` };
+  }
+  if (b.repairMinutes !== undefined && !Number.isFinite(Number(b.repairMinutes))) {
+    return { ok: false, error: "repairMinutes must be a number" };
+  }
+  return { ok: true };
+}
+
 module.exports = {
   validateAnalyzeKpisInput,
   validateTechnicianReportInput,
   validateRecommendUpdatesInput,
   validateRootCauseInput,
   validateFeedbackInput,
-  validateReplayInput
+  validateReplayInput,
+  validateDispatchFeedbackInput
 };

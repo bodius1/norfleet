@@ -1465,6 +1465,100 @@
       font-size: 12px;
       color: var(--text2);
     }
+    .fh-link-btn {
+      appearance: none;
+      border: none;
+      background: none;
+      color: var(--accent);
+      font-size: 11px;
+      cursor: pointer;
+      text-decoration: underline;
+      padding: 0;
+      margin-left: 6px;
+    }
+    .fh-row-focus { background: rgba(34, 211, 238, 0.06); }
+
+  /* Technician Dispatch */
+    .td-summary-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .td-summary-stat {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .td-summary-stat .val { display: block; font-size: 20px; font-weight: 700; font-family: var(--font-mono); }
+    .td-summary-stat .val.critical { color: #f87171; }
+    .td-summary-stat .val.high { color: #fbbf24; }
+    .td-summary-stat .lbl { font-size: 11px; color: var(--text2); }
+    .td-dispatch-queue { display: flex; flex-direction: column; gap: 14px; }
+    .td-dispatch-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      background: rgba(255,255,255,0.02);
+      cursor: pointer;
+    }
+    .td-dispatch-card--selected { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(34,211,238,0.2); }
+    .td-dispatch-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 8px; }
+    .td-priority {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 4px 8px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+    .td-priority--critical { background: rgba(248,113,113,0.2); color: #f87171; }
+    .td-priority--high { background: rgba(251,191,36,0.15); color: #fbbf24; }
+    .td-priority--medium { background: rgba(34,211,238,0.12); color: #22d3ee; }
+    .td-priority--low { background: rgba(148,163,184,0.15); color: #94a3b8; }
+    .td-dispatch-title { margin: 0 0 8px; font-size: 15px; }
+    .td-dispatch-metrics { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--text2); margin-bottom: 10px; }
+    .td-dispatch-why, .td-dispatch-do { font-size: 13px; margin-bottom: 10px; }
+    .td-evidence-list { margin: 6px 0 0 18px; padding: 0; font-size: 12px; color: var(--text2); }
+    .td-dispatch-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .td-admin-section { border-left: 3px solid rgba(251,191,36,0.35); padding-left: 12px; }
+    .td-admin-grid { display: grid; gap: 10px; }
+    .td-admin-card {
+      border: 1px dashed rgba(251,191,36,0.35);
+      border-radius: 8px;
+      padding: 12px;
+      background: rgba(251,191,36,0.04);
+    }
+    .td-admin-badge {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #fbbf24;
+    }
+    .td-feedback-form {
+      display: grid;
+      gap: 10px;
+      max-width: 520px;
+    }
+    .td-feedback-form label { display: grid; gap: 4px; font-size: 12px; color: var(--text2); }
+    .td-feedback-form select, .td-feedback-form input, .td-feedback-form textarea {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 8px;
+      font-family: inherit;
+    }
+    .td-dev-tools { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+    .td-status-pill {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      text-transform: uppercase;
+    }
     .pred-marker-banner {
       margin: 8px 0 12px;
       padding: 8px 12px;
@@ -1923,7 +2017,7 @@
     <div class="nav-tab" data-view="monitor" onclick="switchView('monitor', this)"><span>◈</span>KPI Monitor</div>
     <div class="nav-tab" data-view="fleet-health" onclick="switchView('fleet-health', this)"><span>◉</span>Fleet Health</div>
     <div class="nav-tab" data-view="agents" onclick="switchView('agents', this)"><span>◇</span>AI Agents</div>
-    <div class="nav-tab" data-view="technician-report" onclick="switchView('technician-report', this)"><span>✦</span>Technician Report</div>
+    <div class="nav-tab" data-view="technician-report" onclick="switchView('technician-report', this)"><span>✦</span>Technician Dispatch</div>
   </nav>
 
   <main class="main">
@@ -2069,7 +2163,7 @@
 
         <p class="muted agents-overview-footnote">
           Technician takeaway and AI-generated maintenance actions live in
-          <button type="button" class="agents-inline-link" onclick="switchView('technician-report', document.querySelector('.nav-tab[data-view=&quot;technician-report&quot;]'))">Technician Report</button>.
+          <button type="button" class="agents-inline-link" onclick="switchView('technician-report', document.querySelector('.nav-tab[data-view=&quot;technician-report&quot;]'))">Technician Dispatch</button>.
         </p>
       </div>
 
@@ -2236,5 +2330,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <script src="/contracts/runtimeShapes.js"></script>
   <script src="/webapp.js"></script>
+  <script src="/webappDispatch.js"></script>
 </body>
 </html>

@@ -39,7 +39,10 @@ const state = {
   },
   predictions: [],
   calibration: null,
-  persistenceBackend: "unknown"
+  persistenceBackend: "unknown",
+  dispatchReport: null,
+  selectedDispatchId: null,
+  fleetHealthFocusRobot: null
 };
 
 const SAMPLE_ROBOT_REGISTRY = [
@@ -196,6 +199,60 @@ function escapeHtml(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function safeText(value, fallback = "Not available") {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "number" && !Number.isFinite(value)) return fallback;
+  if (typeof value === "object") return fallback;
+  const s = String(value).trim();
+  if (!s || s === "undefined" || s === "null" || s === "NaN" || s === "[object Object]") return fallback;
+  return s;
+}
+
+function safeNumber(value, fallback = null) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function formatHours(value) {
+  const n = safeNumber(value, null);
+  if (n === null || n <= 0) return "Not available";
+  if (n < 0.1) return "imminent";
+  if (n < 1) {
+    const minutes = Math.max(1, Math.round(n * 60));
+    return `~${minutes} min`;
+  }
+  return `~${n.toFixed(1)}h`;
+}
+
+function formatPercent(value) {
+  const n = safeNumber(value, null);
+  if (n === null) return "Not available";
+  const pct = n <= 1 ? n * 100 : n;
+  return `${Math.round(pct)}%`;
+}
+
+function formatSignalName(name) {
+  const labels = {
+    vibrationRms: "Vibration RMS",
+    motorCurrentA: "Motor current",
+    bearingTempC: "Bearing temperature",
+    batteryCapacityPct: "Battery capacity",
+    batteryVoltage: "Battery voltage",
+    cycleTimeMs: "Cycle time",
+    pickAccuracyPct: "Pick accuracy",
+    pickActuatorDriftMm: "Pick actuator drift"
+  };
+  return labels[name] || safeText(name, "Signal");
+}
+
+function tdPriorityClass(priority) {
+  const p = String(priority || "medium").toLowerCase();
+  if (p === "critical") return "td-priority td-priority--critical";
+  if (p === "high") return "td-priority td-priority--high";
+  if (p === "low") return "td-priority td-priority--low";
+  return "td-priority td-priority--medium";
 }
 
 /** Default chart header (x/y units) + rules for KPIs not in the catalog (e.g. AI-detected names). */
@@ -795,15 +852,20 @@ async function renderFleetHealth() {
         p.insufficientData && p.estimatedTimeToFailureHours == null
           ? "insufficient data"
           : `${p.estimatedTimeToFailureHours ?? "—"}h`;
-      return `<tr>
+      const focus = state.fleetHealthFocusRobot === p.robotId;
+      const dispatchLink =
+        p.alert && typeof switchView === "function"
+          ? `<button type="button" class="fh-link-btn" data-fh-dispatch="${escapeHtml(p.robotId)}">View dispatch</button>`
+          : "";
+      return `<tr class="${focus ? "fh-row-focus" : ""}">
         <td><strong>${escapeHtml(p.robotId)}</strong><br><span class="muted">${escapeHtml(p.robotName || "")}</span></td>
         <td>${escapeHtml(p.failureMode.replace(/_/g, " "))}</td>
-        <td class="${riskClass}">${((p.failureProbability ?? 0) * 100).toFixed(0)}%</td>
+        <td class="${riskClass}">${formatPercent(p.failureProbability ?? 0)}</td>
         <td>${escapeHtml(String(ttf))}</td>
-        <td>${((p.confidence ?? 0) * 100).toFixed(0)}%</td>
-        <td>${((p.healthIndex ?? 0) * 100).toFixed(0)}%</td>
+        <td>${formatPercent(p.confidence ?? 0)}</td>
+        <td>${formatPercent(p.healthIndex ?? 0)}</td>
         <td>${miniSparkline(hi)}</td>
-        <td class="fh-signals">${escapeHtml(sigs || "—")}</td>
+        <td class="fh-signals">${escapeHtml(sigs || "—")} ${dispatchLink}</td>
       </tr>`;
     })
   );
@@ -825,6 +887,12 @@ async function renderFleetHealth() {
   const replayBtn = byId("fh-replay-btn");
   if (refreshBtn) refreshBtn.onclick = () => refreshFleetHealth().catch((e) => showToast("⚠", e.message));
   if (replayBtn) replayBtn.onclick = () => runSimReplay(60).catch((e) => showToast("⚠", e.message));
+  root.querySelectorAll("[data-fh-dispatch]").forEach((btn) => {
+    btn.onclick = () => {
+      state.selectedDispatchId = null;
+      switchView("technician-report", getNavTab("technician-report"));
+    };
+  });
 }
 
 async function refreshFleetHealth() {
@@ -842,6 +910,10 @@ async function runSimReplay(speed = 60) {
     body: JSON.stringify({ speed })
   });
   await refreshFleetHealth();
+  if (typeof loadDispatchReport === "function") {
+    await loadDispatchReport().catch(() => {});
+    if (byId("view-technician-report")?.classList.contains("active")) renderTechnicianReport();
+  }
   const r002 = state.predictions.find((p) => p.robotId === "R-002");
   const hiPct = r002 ? ((r002.healthIndex ?? 0) * 100).toFixed(0) : "—";
   if (status) status.textContent = `Sim advanced (${res.speed}×) · R-002 HI ${hiPct}%`;
@@ -896,7 +968,9 @@ function switchView(id, tabEl) {
   if (view) view.classList.add("active");
   if (tabEl) tabEl.classList.add("active");
   if (id === "technician-report") {
-    renderTechnicianReport();
+    loadDispatchReport()
+      .then(() => renderTechnicianReport())
+      .catch((err) => showToast("⚠", err.message));
     return;
   }
   if (id === "fleet-health") {

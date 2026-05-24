@@ -27,6 +27,9 @@ function emptyState() {
     demoScenario: null,
     aiSessionCalls: [],
     technicianTickets: [],
+    dispatchStates: {},
+    dispatchFeedback: [],
+    dispatchAudit: [],
     telemetry: []
   };
 }
@@ -143,6 +146,25 @@ function createJsonRepository(options = {}) {
       state.technicianTickets.push(t);
       save();
       return t;
+    },
+    getDispatchStates: () => ({ ...(state.dispatchStates || {}) }),
+    setDispatchStates: (states) => {
+      state.dispatchStates = states || {};
+      save();
+    },
+    getDispatchFeedback: () => [...(state.dispatchFeedback || [])],
+    addDispatchFeedback: (f) => {
+      if (!state.dispatchFeedback) state.dispatchFeedback = [];
+      state.dispatchFeedback.push(f);
+      save();
+      return f;
+    },
+    getDispatchAudit: () => [...(state.dispatchAudit || [])],
+    addDispatchAudit: (a) => {
+      if (!state.dispatchAudit) state.dispatchAudit = [];
+      state.dispatchAudit.push(a);
+      save();
+      return a;
     },
     clearPredictions: () => {
       state.predictions = [];
@@ -306,6 +328,22 @@ function createSqliteRepository() {
       const rows = getJson("technicianTickets", []);
       rows.push(t);
       setJson("technicianTickets", rows);
+    },
+    getDispatchStates: () => getJson("dispatchStates", {}),
+    setDispatchStates: (states) => setJson("dispatchStates", states || {}),
+    getDispatchFeedback: () => getJson("dispatchFeedback", []),
+    addDispatchFeedback: (f) => {
+      const rows = getJson("dispatchFeedback", []);
+      rows.push(f);
+      setJson("dispatchFeedback", rows);
+      return f;
+    },
+    getDispatchAudit: () => getJson("dispatchAudit", []),
+    addDispatchAudit: (a) => {
+      const rows = getJson("dispatchAudit", []);
+      rows.push(a);
+      setJson("dispatchAudit", rows);
+      return a;
     },
     clearAll: () => {
       db.exec("DELETE FROM kv_store; DELETE FROM telemetry;");

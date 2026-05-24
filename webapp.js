@@ -684,17 +684,30 @@ function setDirty(agentId, key, dirty) {
 }
 
 async function syncAgentRuntimeFromServer() {
+  const RS = typeof RuntimeShapes !== "undefined" ? RuntimeShapes : null;
   try {
     const rt = await api("/api/agents/runtime");
     if (Array.isArray(rt.agents) && rt.agents.length) {
-      state.agentBuilderConfig = { ...createDefaultAgentBuilderConfig(), agents: rt.agents };
+      const agents = RS ? RS.normalizeAgentList(rt.agents) : rt.agents;
+      const base = createDefaultAgentBuilderConfig();
+      state.agentBuilderConfig = {
+        ...base,
+        agents,
+        workflowOrder: RS ? RS.workflowOrderFromAgents(agents) : base.workflowOrder
+      };
     }
     if (rt.calibration) state.calibration = rt.calibration;
   } catch {
     try {
       const legacy = await api("/api/ai/runtime");
       if (Array.isArray(legacy.agents) && legacy.agents.length) {
-        state.agentBuilderConfig = { ...createDefaultAgentBuilderConfig(), agents: legacy.agents };
+        const agents = RS ? RS.normalizeAgentList(legacy.agents) : legacy.agents;
+        const base = createDefaultAgentBuilderConfig();
+        state.agentBuilderConfig = {
+          ...base,
+          agents,
+          workflowOrder: RS ? RS.workflowOrderFromAgents(agents) : base.workflowOrder
+        };
       }
       if (legacy.calibration) state.calibration = legacy.calibration;
       if (legacy.persistenceBackend) state.persistenceBackend = legacy.persistenceBackend;
@@ -715,7 +728,8 @@ async function saveAgentRuntimeToServer() {
 
 async function refreshPredictions() {
   const res = await api("/api/predictions");
-  state.predictions = res.predictions || [];
+  const RS = typeof RuntimeShapes !== "undefined" ? RuntimeShapes : null;
+  state.predictions = (res.predictions || []).map((p) => (RS ? RS.normalizePrediction(p) : p));
   state.calibration = res.calibration || state.calibration;
   return state.predictions;
 }
@@ -777,11 +791,16 @@ async function renderFleetHealth() {
         .map((s) => `${s.signal} (${s.weight})`)
         .join(", ");
       const riskClass = (p.failureProbability ?? 0) > 0.7 ? "fh-risk-high" : "fh-risk-med";
+      const ttf =
+        p.insufficientData && p.estimatedTimeToFailureHours == null
+          ? "insufficient data"
+          : `${p.estimatedTimeToFailureHours ?? "—"}h`;
       return `<tr>
         <td><strong>${escapeHtml(p.robotId)}</strong><br><span class="muted">${escapeHtml(p.robotName || "")}</span></td>
         <td>${escapeHtml(p.failureMode.replace(/_/g, " "))}</td>
         <td class="${riskClass}">${((p.failureProbability ?? 0) * 100).toFixed(0)}%</td>
-        <td>${p.estimatedTimeToFailureHours ?? "—"}h</td>
+        <td>${escapeHtml(String(ttf))}</td>
+        <td>${((p.confidence ?? 0) * 100).toFixed(0)}%</td>
         <td>${((p.healthIndex ?? 0) * 100).toFixed(0)}%</td>
         <td>${miniSparkline(hi)}</td>
         <td class="fh-signals">${escapeHtml(sigs || "—")}</td>
@@ -796,9 +815,9 @@ async function renderFleetHealth() {
   root.innerHTML = `
     <table class="fh-table">
       <thead><tr>
-        <th>Robot</th><th>Failure mode</th><th>Probability</th><th>TTF</th><th>Health index</th><th>HI trend</th><th>Top signals</th>
+        <th>Robot</th><th>Failure mode</th><th>Probability</th><th>TTF</th><th>Confidence</th><th>Health index</th><th>HI trend</th><th>Top signals</th>
       </tr></thead>
-      <tbody>${rows.length ? rows.join("") : `<tr><td colspan="7" class="muted">No predictions yet — run Fast-forward or wait for telemetry.</td></tr>`}</tbody>
+      <tbody>${rows.length ? rows.join("") : `<tr><td colspan="8" class="muted">No predictions yet — run Fast-forward or wait for telemetry.</td></tr>`}</tbody>
     </table>
     <div class="fh-calibration">Calibration (from feedback): ${escapeHtml(cal)} · persistence: ${escapeHtml(state.persistenceBackend)}</div>
   `;
@@ -823,7 +842,9 @@ async function runSimReplay(speed = 60) {
     body: JSON.stringify({ speed })
   });
   await refreshFleetHealth();
-  if (status) status.textContent = `Sim advanced (${res.speed}×)`;
+  const r002 = state.predictions.find((p) => p.robotId === "R-002");
+  const hiPct = r002 ? ((r002.healthIndex ?? 0) * 100).toFixed(0) : "—";
+  if (status) status.textContent = `Sim advanced (${res.speed}×) · R-002 HI ${hiPct}%`;
   showToast("◉", "Simulation fast-forwarded — check predictions.");
 }
 
@@ -850,6 +871,24 @@ async function submitPredictionFeedback(actionId, outcome) {
   renderTechnicianReport();
 }
 
+let fleetHealthPollTimer = null;
+
+function startFleetHealthPoll() {
+  if (fleetHealthPollTimer) return;
+  fleetHealthPollTimer = setInterval(() => {
+    if (byId("view-fleet-health")?.classList.contains("active")) {
+      refreshFleetHealth().catch(() => {});
+    }
+  }, 3000);
+}
+
+function stopFleetHealthPoll() {
+  if (fleetHealthPollTimer) {
+    clearInterval(fleetHealthPollTimer);
+    fleetHealthPollTimer = null;
+  }
+}
+
 function switchView(id, tabEl) {
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
   document.querySelectorAll(".nav-tab").forEach((t) => t.classList.remove("active"));
@@ -861,9 +900,11 @@ function switchView(id, tabEl) {
     return;
   }
   if (id === "fleet-health") {
+    startFleetHealthPoll();
     refreshFleetHealth().catch((err) => showToast("⚠", err.message));
     return;
   }
+  stopFleetHealthPoll();
   if (id === "agents") {
     renderAgentsView();
     return;
@@ -1115,9 +1156,9 @@ function renderAgentStatusCardsFromConfig() {
         <div class="agent-field-lbl">Role</div>
         <div class="agent-field-val">${escapeHtml(a.role)}</div>
         <div class="agent-field-lbl">Assigned task</div>
-        <div class="agent-field-val">${escapeHtml(a.assignedTask)}</div>
+        <div class="agent-field-val">${escapeHtml(a.assignedTask || "Monitoring fleet telemetry")}</div>
         <div class="agent-field-lbl">Encountered failures</div>
-        <div class="agent-field-val">${escapeHtml(a.failures)}</div>
+        <div class="agent-field-val">${escapeHtml(a.encounteredFailures ?? a.failures ?? "None reported")}</div>
       </div>`;
     })
     .join("");
@@ -2586,6 +2627,12 @@ async function loadInitial() {
   state.robots = await api("/api/robots");
   state.fleets = await api("/api/fleets");
   await syncAgentRuntimeFromServer();
+  try {
+    const runtime = await api("/api/ai/runtime");
+    if (runtime.persistenceBackend) state.persistenceBackend = runtime.persistenceBackend;
+  } catch {
+    /* optional */
+  }
   await refreshPredictions().catch(() => {});
   renderRobots();
   renderFleets();

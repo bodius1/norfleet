@@ -298,6 +298,7 @@ app.put("/api/agents/runtime", (req, res) => {
 });
 
 app.get("/api/predictions", (_req, res) => {
+  platform.runAllPredictions();
   const preds = platform
     .getAllLatestPredictions()
     .sort((a, b) => (a.estimatedTimeToFailureHours ?? 999) - (b.estimatedTimeToFailureHours ?? 999));
@@ -305,20 +306,13 @@ app.get("/api/predictions", (_req, res) => {
 });
 
 app.get("/api/robots/:id/health", (req, res) => {
-  const robotId = req.params.id;
-  const pred = platform.getLatestPrediction(robotId);
-  const hiSeries = platform.timeSeries.getHotSeries(robotId, "vibrationRms");
-  if (!pred) {
-    platform.runPredictionForRobot(robotId, platform.simulator.getSimTimeMs());
-  }
-  const latest = platform.getLatestPrediction(robotId);
-  if (!latest) return res.status(404).json({ error: "robot not found or insufficient telemetry" });
-  res.json({
-    robotId,
-    healthIndex: latest.healthIndex,
-    prediction: latest,
-    hiSeries: platform.timeSeries.getHotSeries(robotId, "vibrationRms").slice(-30)
-  });
+  const payload = platform.getRobotHealthPayload(req.params.id);
+  if (!payload) return res.status(404).json({ error: "robot not found or insufficient telemetry" });
+  res.json(payload);
+});
+
+app.get("/api/debug/r002-pipeline", (_req, res) => {
+  res.json(platform.getDebugPipeline("R-002"));
 });
 
 app.post("/api/telemetry/ingest", (req, res) => {
@@ -337,9 +331,19 @@ app.post("/api/sim/replay", (req, res) => {
   if (!valid.ok) return res.status(400).json({ error: valid.error });
   const speed = Number(req.body.speed) || 60;
   platform.setReplaySpeed(speed);
-  for (let i = 0; i < Math.min(120, speed); i += 1) platform.simulator.tick();
+  const tickCount = Math.min(240, speed * 2);
+  for (let i = 0; i < tickCount; i += 1) {
+    platform.simulator.tick().forEach((r) => {
+      platform.timeSeries.write(r);
+    });
+  }
   platform.runAllPredictions();
-  res.json({ ok: true, speed: platform.adapter.getReplaySpeed?.() || speed, simTimeMs: platform.simulator.getSimTimeMs() });
+  res.json({
+    ok: true,
+    speed: platform.adapter.getReplaySpeed?.() || speed,
+    simTimeMs: platform.simulator.getSimTimeMs(),
+    ticksAdvanced: tickCount
+  });
 });
 
 app.post("/api/ai/analyze-kpis", async (req, res) => {
@@ -678,4 +682,5 @@ app.get("/api/stream", (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Norfleet MVP running at http://localhost:${PORT}`);
+  console.log(`Persistence backend: ${platform.repo.backend}`);
 });

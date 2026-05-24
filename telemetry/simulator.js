@@ -32,8 +32,13 @@ const FAILURE_LIMITS = {
 
 const FAILURE_MODES = Object.keys(FAILURE_LIMITS);
 
-function noise(scale = 1) {
-  return (Math.random() - 0.5) * 2 * scale;
+function createSeededRng(seed) {
+  if (seed == null || seed === undefined) return () => Math.random();
+  let state = (Number(seed) >>> 0) || 1;
+  return () => {
+    state = (Math.imul(1664525, state) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
 }
 
 function createSimulator(options = {}) {
@@ -43,6 +48,11 @@ function createSimulator(options = {}) {
   let tickIntervalMs = options.tickIntervalMs || 2000;
   let intervalHandle = null;
   let onReading = null;
+  const rng = createSeededRng(options.seed);
+
+  function noise(scale = 1) {
+    return (rng() - 0.5) * 2 * scale;
+  }
 
   function registerRobot(robotId, model, failureInjection = null) {
     const signals = ROBOT_SIGNALS[model] || ROBOT_SIGNALS.Stretch;
@@ -67,24 +77,33 @@ function createSimulator(options = {}) {
   }
 
   function degradationFactor(state, signal) {
-    if (!state.failureInjection || state.failed) return 0;
+    if (!state.failureInjection) return 0;
     const { mode, startMs, trueFailureTimeMs } = state.failureInjection;
     const limitDef = FAILURE_LIMITS[mode];
     if (!limitDef) return 0;
-    const t = Math.max(0, Math.min(1, (simTimeMs - startMs) / Math.max(1, trueFailureTimeMs - startMs)));
+    let t = Math.max(0, Math.min(1, (simTimeMs - startMs) / Math.max(1, trueFailureTimeMs - startMs)));
+    if (state.failed || simTimeMs >= trueFailureTimeMs) t = 1;
     const exp = Math.pow(t, 1.8);
     if (mode === "bearing_wear") {
       if (signal === "vibrationRms") return exp * 2.2;
       if (signal === "bearingTempC") return exp * 18;
+      if (signal === "motorCurrentA") return exp * 0.35;
     }
     if (mode === "battery_degradation") {
       if (signal === "batteryCapacityPct") return exp * 38;
       if (signal === "batteryVoltage") return exp * 4.5;
+      if (signal === "cycleTimeMs") return exp * 420;
+      if (signal === "trafficDelayMs") return exp * 360;
     }
-    if (mode === "motor_creep" && signal === "motorCurrentA") return exp * 4.8;
+    if (mode === "motor_creep") {
+      if (signal === "motorCurrentA") return exp * 4.8;
+      if (signal === "cycleTimeMs") return exp * 850;
+      if (signal === "bearingTempC") return exp * 4;
+    }
     if (mode === "pick_drift") {
       if (signal === "pickActuatorDriftMm") return exp * 3.8;
       if (signal === "pickAccuracyPct") return exp * 6;
+      if (signal === "cycleTimeMs") return exp * 900;
     }
     return 0;
   }
@@ -147,6 +166,10 @@ function createSimulator(options = {}) {
 
   function setReplaySpeed(speed) {
     replaySpeed = Math.max(1, Math.min(360, Number(speed) || 1));
+    if (intervalHandle && onReading) {
+      clearInterval(intervalHandle);
+      intervalHandle = setInterval(tick, Math.max(100, Math.floor(tickIntervalMs / replaySpeed)));
+    }
   }
 
   function getReplaySpeed() {
@@ -176,6 +199,19 @@ function createSimulator(options = {}) {
     return out;
   }
 
+  /** Validation-only ground truth for a single robot */
+  function getScenarioTruth(robotId) {
+    const state = robots.get(robotId);
+    if (!state) return null;
+    return {
+      robotId: state.robotId,
+      failureMode: state.failureInjection?.mode || null,
+      trueFailureTimeMs: state.trueFailureTimeMs,
+      failed: state.failed,
+      simTimeMs
+    };
+  }
+
   function injectFailure(robotId, mode, opts = {}) {
     const state = robots.get(robotId);
     if (!state || !FAILURE_MODES.includes(mode)) return false;
@@ -199,6 +235,7 @@ function createSimulator(options = {}) {
     getSimTimeMs,
     advanceMs,
     getValidationSnapshot,
+    getScenarioTruth,
     injectFailure,
     FAILURE_MODES,
     FAILURE_LIMITS,

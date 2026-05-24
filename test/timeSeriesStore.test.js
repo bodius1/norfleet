@@ -16,6 +16,9 @@ describe("timeSeriesStore", () => {
     assert.equal(q.length, 10);
     const w = ts.window("R-1", ["vibrationRms"], 3600000, base + 600000);
     assert.ok(w.vibrationRms.length >= 1);
+    ts.clear();
+    const wRepo = ts.window("R-1", ["vibrationRms"], 3600000, base + 600000);
+    assert.ok(wRepo.vibrationRms.length >= 1, "window should fall back to repository");
     repo.clearAll();
   });
 });

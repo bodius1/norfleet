@@ -18,21 +18,25 @@ function normalizeCanonical(reading) {
 }
 
 function createSimulatedTelemetryAdapter(simulator) {
-  let unsub = null;
+  let unsubscribe = null;
   return {
     name: "simulated",
     async connect() {},
     async disconnect() {
-      if (unsub) unsub();
-      simulator.stop();
+      if (unsubscribe) {
+        unsubscribe();
+        unsubscribe = null;
+      } else {
+        simulator.stop();
+      }
     },
     subscribe(onReading) {
-      unsub = onReading;
       simulator.start((r) => onReading(normalizeCanonical(r)));
-      return () => {
+      unsubscribe = () => {
         simulator.stop();
-        unsub = null;
+        unsubscribe = null;
       };
+      return unsubscribe;
     },
     normalize: normalizeCanonical,
     setReplaySpeed: (s) => simulator.setReplaySpeed(s),

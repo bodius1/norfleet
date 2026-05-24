@@ -8,7 +8,9 @@
     "dev": "node server.js",
     "test": "node --test test/*.test.js",
     "seed:demo": "node scripts/seedDemo.js",
-    "validate": "node scripts/validate.js"
+    "validate": "node scripts/validate.js",
+    "phase0:gate": "node scripts/phase0-gate.js",
+    "test:stability": "node scripts/test-stability.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",

@@ -2,10 +2,10 @@
  * Feedback-driven recalibration — adjusts alert thresholds per failure mode.
  */
 const DEFAULT_CALIBRATION = {
-  bearing_wear: { alertThreshold: 0.4, minProbability: 0.4, horizonHours: 48, falseAlarms: 0, confirmed: 0 },
-  battery_degradation: { alertThreshold: 0.4, minProbability: 0.4, horizonHours: 48, falseAlarms: 0, confirmed: 0 },
-  motor_creep: { alertThreshold: 0.4, minProbability: 0.4, horizonHours: 48, falseAlarms: 0, confirmed: 0 },
-  pick_drift: { alertThreshold: 0.4, minProbability: 0.4, horizonHours: 48, falseAlarms: 0, confirmed: 0 }
+  bearing_wear: { alertThreshold: 0.4, minProbability: 0.4, minConfidence: 0.35, horizonHours: 48, falseAlarms: 0, confirmed: 0 },
+  battery_degradation: { alertThreshold: 0.4, minProbability: 0.4, minConfidence: 0.35, horizonHours: 48, falseAlarms: 0, confirmed: 0 },
+  motor_creep: { alertThreshold: 0.4, minProbability: 0.4, minConfidence: 0.35, horizonHours: 48, falseAlarms: 0, confirmed: 0 },
+  pick_drift: { alertThreshold: 0.4, minProbability: 0.4, minConfidence: 0.35, horizonHours: 48, falseAlarms: 0, confirmed: 0 }
 };
 
 function loadCalibration(repo) {

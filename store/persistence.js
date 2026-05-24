@@ -26,24 +26,28 @@ function emptyState() {
     calibration: {},
     demoScenario: null,
     aiSessionCalls: [],
-    technicianTickets: []
+    technicianTickets: [],
+    telemetry: []
   };
 }
 
-function createJsonRepository() {
-  ensureDataDir();
+function createJsonRepository(options = {}) {
+  const jsonPath = options.jsonPath || JSON_PATH;
+  const dataDir = path.dirname(jsonPath);
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
   let state = emptyState();
-  if (fs.existsSync(JSON_PATH)) {
+  if (fs.existsSync(jsonPath)) {
     try {
-      state = { ...emptyState(), ...JSON.parse(fs.readFileSync(JSON_PATH, "utf8")) };
+      state = { ...emptyState(), ...JSON.parse(fs.readFileSync(jsonPath, "utf8")) };
+      if (!Array.isArray(state.telemetry)) state.telemetry = [];
     } catch {
       state = emptyState();
     }
   }
 
   function save() {
-    ensureDataDir();
-    fs.writeFileSync(JSON_PATH, JSON.stringify(state, null, 2), "utf8");
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(jsonPath, JSON.stringify(state, null, 2), "utf8");
   }
 
   function initSchema() {
@@ -140,13 +144,49 @@ function createJsonRepository() {
       save();
       return t;
     },
+    clearPredictions: () => {
+      state.predictions = [];
+      save();
+    },
+    setPredictions: (rows) => {
+      state.predictions = rows;
+      save();
+    },
+    clearTelemetry: () => {
+      state.telemetry = [];
+      save();
+    },
+    writeTelemetry: (robotId, signal, ts, value) => {
+      if (!state.telemetry) state.telemetry = [];
+      const exists = state.telemetry.some(
+        (row) => row.robotId === robotId && row.signal === signal && row.ts === ts
+      );
+      if (exists) return;
+      state.telemetry.push({ robotId, signal, ts, value: Number(value) });
+      save();
+    },
+    queryTelemetry: (robotId, signal, fromTs, toTs) => {
+      return (state.telemetry || [])
+        .filter(
+          (row) =>
+            row.robotId === robotId &&
+            row.signal === signal &&
+            row.ts >= fromTs &&
+            row.ts <= toTs
+        )
+        .sort((a, b) => a.ts - b.ts)
+        .map((row) => ({ ts: row.ts, value: row.value }));
+    },
+    queryTelemetryMulti: (robotId, fromTs, toTs) => {
+      return (state.telemetry || [])
+        .filter((row) => row.robotId === robotId && row.ts >= fromTs && row.ts <= toTs)
+        .sort((a, b) => a.ts - b.ts)
+        .map((row) => ({ signal: row.signal, ts: row.ts, value: row.value }));
+    },
     clearAll: () => {
       state = emptyState();
       save();
-    },
-    writeTelemetry: () => {},
-    queryTelemetry: () => [],
-    queryTelemetryMulti: () => []
+    }
   };
 }
 
@@ -269,6 +309,11 @@ function createSqliteRepository() {
     },
     clearAll: () => {
       db.exec("DELETE FROM kv_store; DELETE FROM telemetry;");
+    },
+    clearPredictions: () => setJson("predictions", []),
+    setPredictions: (rows) => setJson("predictions", rows),
+    clearTelemetry: () => {
+      db.exec("DELETE FROM telemetry;");
     },
     writeTelemetry: (robotId, signal, ts, value) => {
       db.prepare("INSERT OR REPLACE INTO telemetry(robot_id,signal,ts,value) VALUES(?,?,?,?)").run(

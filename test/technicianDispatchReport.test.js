@@ -5,7 +5,8 @@ const {
   buildTechnicianDispatchReport,
   computePriority,
   sortDispatches,
-  isActionablePrediction
+  isActionablePrediction,
+  buildStableDispatchId
 } = require("../services/technicianDispatchReport");
 
 function samplePrediction(overrides = {}) {
@@ -248,6 +249,17 @@ describe("technician dispatch report", () => {
   it("tiny positive TTF uses minute phrasing between 0.1h and 1h", () => {
     assert.equal(formatTimeToFailureWithin(0.2), "within ~12 minutes");
     assert.equal(formatHours(0.2), "~12 min");
+  });
+
+  it("uses stable dispatchId without predictionId", () => {
+    const report = buildTechnicianDispatchReport({
+      predictions: [samplePrediction({ id: "P-10" })],
+      robots: [{ id: "R-002", name: "Aisle Runner 12", model: "LocusBot", warehouseZone: "B", status: "active" }]
+    });
+    assert.equal(report.dispatches[0].dispatchId, "disp-R-002-bearing_wear");
+    assert.equal(report.dispatches[0].prediction.predictionId, "P-10");
+    assert.ok(!report.dispatches[0].dispatchId.includes("P-10"));
+    assert.equal(buildStableDispatchId("R-002", "bearing_wear"), "disp-R-002-bearing_wear");
   });
 
   it("null TTF stays Not available and does not create dispatch", () => {

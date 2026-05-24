@@ -61,6 +61,13 @@ function createDispatchWorkflow(repo) {
     });
   }
 
+  function markWorkOrderCreated(dispatchId, payload = {}) {
+    return updateStatus(dispatchId, "work_order_created", {
+      workOrderId: payload.workOrderId,
+      acknowledgedBy: payload.technicianId || payload.assignedTechnicianId || payload.acknowledgedBy
+    });
+  }
+
   function recordFeedback(dispatchId, payload, recordPlatformFeedback) {
     const outcome = payload.outcome;
     if (!OUTCOMES.includes(outcome)) {
@@ -121,6 +128,7 @@ function createDispatchWorkflow(repo) {
     defer,
     resolve,
     falseAlarm,
+    markWorkOrderCreated,
     recordFeedback,
     OUTCOMES
   };

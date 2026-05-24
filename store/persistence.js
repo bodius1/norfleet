@@ -30,6 +30,9 @@ function emptyState() {
     dispatchStates: {},
     dispatchFeedback: [],
     dispatchAudit: [],
+    activeDispatches: {},
+    workOrders: [],
+    workOrderAudit: [],
     telemetry: []
   };
 }
@@ -163,6 +166,29 @@ function createJsonRepository(options = {}) {
     addDispatchAudit: (a) => {
       if (!state.dispatchAudit) state.dispatchAudit = [];
       state.dispatchAudit.push(a);
+      save();
+      return a;
+    },
+    getActiveDispatches: () => ({ ...(state.activeDispatches || {}) }),
+    setActiveDispatches: (rows) => {
+      state.activeDispatches = rows || {};
+      save();
+    },
+    getWorkOrders: () => [...(state.workOrders || [])],
+    setWorkOrders: (rows) => {
+      state.workOrders = rows || [];
+      save();
+    },
+    addWorkOrder: (w) => {
+      if (!state.workOrders) state.workOrders = [];
+      state.workOrders.push(w);
+      save();
+      return w;
+    },
+    getWorkOrderAudit: () => [...(state.workOrderAudit || [])],
+    addWorkOrderAudit: (a) => {
+      if (!state.workOrderAudit) state.workOrderAudit = [];
+      state.workOrderAudit.push(a);
       save();
       return a;
     },
@@ -343,6 +369,23 @@ function createSqliteRepository() {
       const rows = getJson("dispatchAudit", []);
       rows.push(a);
       setJson("dispatchAudit", rows);
+      return a;
+    },
+    getActiveDispatches: () => getJson("activeDispatches", {}),
+    setActiveDispatches: (rows) => setJson("activeDispatches", rows || {}),
+    getWorkOrders: () => getJson("workOrders", []),
+    setWorkOrders: (rows) => setJson("workOrders", rows || []),
+    addWorkOrder: (w) => {
+      const rows = getJson("workOrders", []);
+      rows.push(w);
+      setJson("workOrders", rows);
+      return w;
+    },
+    getWorkOrderAudit: () => getJson("workOrderAudit", []),
+    addWorkOrderAudit: (a) => {
+      const rows = getJson("workOrderAudit", []);
+      rows.push(a);
+      setJson("workOrderAudit", rows);
       return a;
     },
     clearAll: () => {

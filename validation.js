@@ -63,6 +63,27 @@ function validateDispatchFeedbackInput(body) {
   return { ok: true };
 }
 
+function validateWorkOrderStatusInput(body) {
+  const b = body || {};
+  const statuses = ["open", "assigned", "in_progress", "on_hold", "resolved", "false_alarm", "cancelled"];
+  if (!b.status || !statuses.includes(b.status)) {
+    return { ok: false, error: `status must be one of: ${statuses.join(", ")}` };
+  }
+  return { ok: true };
+}
+
+function validateWorkOrderResolveInput(body) {
+  const b = body || {};
+  const outcomes = ["confirmed_failure", "fixed_early", "false_alarm", "not_enough_evidence"];
+  if (b.outcome !== undefined && !outcomes.includes(b.outcome)) {
+    return { ok: false, error: `outcome must be one of: ${outcomes.join(", ")}` };
+  }
+  if (b.repairMinutes !== undefined && !Number.isFinite(Number(b.repairMinutes))) {
+    return { ok: false, error: "repairMinutes must be a number" };
+  }
+  return { ok: true };
+}
+
 module.exports = {
   validateAnalyzeKpisInput,
   validateTechnicianReportInput,
@@ -70,5 +91,7 @@ module.exports = {
   validateRootCauseInput,
   validateFeedbackInput,
   validateReplayInput,
-  validateDispatchFeedbackInput
+  validateDispatchFeedbackInput,
+  validateWorkOrderStatusInput,
+  validateWorkOrderResolveInput
 };

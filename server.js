@@ -28,10 +28,14 @@ const {
   validateRootCauseInput,
   validateFeedbackInput,
   validateReplayInput,
-  validateDispatchFeedbackInput
+  validateDispatchFeedbackInput,
+  validateWorkOrderStatusInput,
+  validateWorkOrderResolveInput
 } = require("./validation");
 const { buildTechnicianDispatchReport } = require("./services/technicianDispatchReport");
 const { createDispatchWorkflow } = require("./services/dispatchWorkflow");
+const { createWorkOrderService } = require("./services/workOrders");
+const { createDispatchRegistry } = require("./services/dispatchRegistry");
 
 const app = express();
 const PORT = config.env.PORT;
@@ -56,6 +60,63 @@ app.use("/api/tools", requireAdminIfConfigured);
 runtimeStore.init(platform.repo);
 
 const dispatchWorkflow = createDispatchWorkflow(platform.repo);
+const dispatchRegistry = createDispatchRegistry(platform.repo);
+
+function buildLiveDispatchReport() {
+  platform.runAllPredictions();
+  const predictions = platform.getAllLatestPredictions();
+  const robots = runtimeStore.getRobots();
+  const agents = platform.getAgentRuntimeConfig();
+  const auth = resolveProviderAuth();
+  const fleetId = runtimeStore.getFleets()[0]?.id || "fleet-default";
+  const report = buildTechnicianDispatchReport({
+    predictions,
+    robots,
+    anomalies: platform.repo.getAnomalies(),
+    agents,
+    feedback: dispatchWorkflow.getFeedback(),
+    dispatchStates: dispatchWorkflow.getStates(),
+    modelInfo: {
+      provider: auth.provider,
+      model: auth.model,
+      persistenceBackend: platform.repo.backend,
+      calibration: platform.getCalibration()
+    },
+    fleetId,
+    siteId: "localhost-demo"
+  });
+  return dispatchRegistry.enrichReportDispatches(report, (robotId) => platform.getLatestPrediction(robotId));
+}
+
+function resolveDispatchForWorkOrder(dispatchId) {
+  const persisted = dispatchRegistry.get(dispatchId);
+  if (persisted && dispatchRegistry.canCreateWorkOrder(persisted)) {
+    return dispatchRegistry.refreshPredictionFields(persisted, platform.getLatestPrediction(persisted.robot?.robotId));
+  }
+  return dispatchRegistry.resolveForWorkOrder(dispatchId, buildLiveDispatchReport);
+}
+
+const workOrderService = createWorkOrderService(platform.repo, {
+  getDispatchById: resolveDispatchForWorkOrder,
+  getLivePredictionForRobot: (robotId) => platform.getLatestPrediction(robotId),
+  markDispatchWorkOrderCreated: (dispatchId, payload) => {
+    dispatchWorkflow.markWorkOrderCreated(dispatchId, payload);
+    const dispatch = dispatchRegistry.get(dispatchId);
+    if (dispatch) {
+      dispatchRegistry.upsert({
+        ...dispatch,
+        workflow: {
+          ...dispatch.workflow,
+          status: "work_order_created",
+          workOrderId: payload.workOrderId,
+          lastUpdatedAt: new Date().toISOString()
+        }
+      });
+    }
+  },
+  recordDispatchFeedback: (dispatchId, payload) =>
+    dispatchWorkflow.recordFeedback(dispatchId, payload, (fb) => platform.recordFeedback(fb))
+});
 
 const modelToKpis = {
   Stretch: ["Throughput", "Cycle Time", "Uptime", "Battery Health"],
@@ -303,28 +364,7 @@ app.put("/api/agents/runtime", (req, res) => {
 });
 
 app.get("/api/technician/dispatch-report", (_req, res) => {
-  platform.runAllPredictions();
-  const predictions = platform.getAllLatestPredictions();
-  const robots = runtimeStore.getRobots();
-  const agents = platform.getAgentRuntimeConfig();
-  const auth = resolveProviderAuth();
-  const report = buildTechnicianDispatchReport({
-    predictions,
-    robots,
-    anomalies: platform.repo.getAnomalies(),
-    agents,
-    feedback: dispatchWorkflow.getFeedback(),
-    dispatchStates: dispatchWorkflow.getStates(),
-    modelInfo: {
-      provider: auth.provider,
-      model: auth.model,
-      persistenceBackend: platform.repo.backend,
-      calibration: platform.getCalibration()
-    },
-    fleetId: runtimeStore.getFleets()[0]?.id || "fleet-default",
-    siteId: "localhost-demo"
-  });
-  res.json(report);
+  res.json(buildLiveDispatchReport());
 });
 
 function dispatchBody(req) {
@@ -363,6 +403,74 @@ app.post("/api/dispatch/:dispatchId/feedback", (req, res) => {
     return res.json({ ok: true, feedback: record, calibration: platform.getCalibration() });
   } catch (err) {
     return res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/dispatch/:dispatchId/work-order", (req, res) => {
+  try {
+    const result = workOrderService.createWorkOrderFromDispatch(req.params.dispatchId, {
+      ...dispatchBody(req),
+      force: Boolean(req.body?.force)
+    });
+    if (result.reusedExisting) {
+      return res.json({ ok: true, reusedExisting: true, workOrder: result.workOrder });
+    }
+    return res.status(201).json({ ok: true, workOrder: result.workOrder });
+  } catch (err) {
+    const status = String(err.message || "").includes("not found") ? 404 : 400;
+    return res.status(status).json({ error: err.message });
+  }
+});
+
+app.get("/api/work-orders", (req, res) => {
+  const workOrders = workOrderService.listWorkOrders({
+    status: req.query.status,
+    robotId: req.query.robotId,
+    dispatchId: req.query.dispatchId
+  });
+  res.json({ workOrders });
+});
+
+app.get("/api/work-orders/:workOrderId", (req, res) => {
+  const workOrder = workOrderService.getWorkOrder(req.params.workOrderId);
+  if (!workOrder) return res.status(404).json({ error: "work order not found" });
+  return res.json({ workOrder });
+});
+
+app.post("/api/work-orders/:workOrderId/status", (req, res) => {
+  const valid = validateWorkOrderStatusInput(req.body || {});
+  if (!valid.ok) return res.status(400).json({ error: valid.error });
+  try {
+    const workOrder = workOrderService.updateWorkOrderStatus(req.params.workOrderId, {
+      ...req.body,
+      assignedTechnicianId: req.body?.assignedTechnicianId || req.body?.technicianId
+    });
+    return res.json({ ok: true, workOrder });
+  } catch (err) {
+    const status = String(err.message || "").includes("not found") ? 404 : 400;
+    return res.status(status).json({ error: err.message });
+  }
+});
+
+app.post("/api/work-orders/:workOrderId/resolve", (req, res) => {
+  const valid = validateWorkOrderResolveInput(req.body || {});
+  if (!valid.ok) return res.status(400).json({ error: valid.error });
+  try {
+    const result = workOrderService.resolveWorkOrder(req.params.workOrderId, {
+      ...req.body,
+      technicianId: req.body?.technicianId || "technician"
+    });
+    return res.json({
+      ok: true,
+      workOrder: result.workOrder,
+      afterSnapshot: result.afterSnapshot,
+      outcomeAssessment: result.outcomeAssessment,
+      feedback: result.feedback,
+      calibration: platform.getCalibration()
+    });
+  } catch (err) {
+    const status = String(err.message || "").includes("not found") ? 404 : 400;
+    return res.status(status).json({ error: err.message });
   }
 });
 

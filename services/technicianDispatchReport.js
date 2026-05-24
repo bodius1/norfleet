@@ -7,6 +7,7 @@ const {
   formatTimeToFailureWithin
 } = require("../utils/dispatchFormat");
 const { getRepairPlan, pickEvidenceSignals, mapEvidenceSignal } = require("./repairPlans");
+const { buildStableDispatchId } = require("./dispatchRegistry");
 
 const PRIORITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
 
@@ -100,10 +101,10 @@ function operationalImpact(pred, priority) {
   return impact;
 }
 
-function buildDispatchItem(pred, robots, workflowStates, calibration) {
+function buildDispatchItem(pred, robots, workflowStates, calibration, fleetId) {
   const priority = computePriority(pred, calibration);
   const plan = getRepairPlan(pred.failureMode, pred.confidence);
-  const dispatchId = `disp-${pred.robotId}-${pred.id || pred.failureMode}`;
+  const dispatchId = buildStableDispatchId(pred.robotId, pred.failureMode, fleetId);
   const wf = workflowStates?.[dispatchId] || {};
   const evidenceRows = pickEvidenceSignals(pred.failureMode, pred.contributingSignals || [])
     .map(mapEvidenceSignal)
@@ -142,12 +143,14 @@ function buildDispatchItem(pred, robots, workflowStates, calibration) {
       lockoutRequired: plan.lockoutRequired,
       approvalRequired: plan.approvalRequired
     },
-    workflow: {
+    workflow: sanitizeForJson({
       status: safeText(wf.status, "new"),
       acknowledgedBy: wf.acknowledgedBy,
       workOrderId: wf.workOrderId,
+      deferReason: wf.deferReason,
+      deferredUntil: wf.deferredUntil,
       lastUpdatedAt: wf.lastUpdatedAt
-    }
+    })
   });
 }
 
@@ -218,7 +221,7 @@ function buildTechnicianDispatchReport({
   ).length;
 
   const dispatches = actionable
-    .map((pred) => buildDispatchItem(pred, robots, dispatchStates, calibration))
+    .map((pred) => buildDispatchItem(pred, robots, dispatchStates, calibration, fleetId))
     .sort(sortDispatches);
 
   const counts = { critical: 0, high: 0, medium: 0, low: 0 };
@@ -294,5 +297,6 @@ module.exports = {
   computePriority,
   sortDispatches,
   modeCalibration,
-  isStableReason
+  isStableReason,
+  buildStableDispatchId
 };

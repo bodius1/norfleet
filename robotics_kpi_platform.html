@@ -7,6 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css" />
+  <link rel="stylesheet" href="/webappDispatch.css" />
   <style>
     :root {
       --bg: #0a0c10;
@@ -224,6 +226,12 @@
     }
     .nav-tab:hover { color: var(--text2); }
     .nav-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .nav-tab-icon {
+      font-size: 16px;
+      line-height: 1;
+      opacity: 0.85;
+    }
+    .nav-tab.active .nav-tab-icon { opacity: 1; }
 
     .main {
       position: relative;
@@ -235,6 +243,7 @@
 
     .view { display: none; }
     .view.active { display: block; }
+    .view.view-suppressed { display: none !important; }
 
     .settings-modal {
       position: fixed;
@@ -262,6 +271,134 @@
       grid-template-columns: 1fr 1fr;
       gap: 14px;
       margin-top: 10px;
+    }
+    .settings-stack {
+      display: grid;
+      gap: 14px;
+      margin-top: 12px;
+    }
+    .settings-section {
+      background: var(--bg2);
+      border: 1px solid var(--border2);
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .settings-section-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+      margin: 0 0 6px;
+    }
+    .settings-section-desc {
+      font-size: 12px;
+      color: var(--text3);
+      line-height: 1.45;
+      margin: 0 0 12px;
+    }
+    .settings-connection-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 4px 0 10px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border2);
+    }
+    .settings-connection-label {
+      font-size: 12px;
+      color: var(--text3);
+    }
+    .settings-status-pill {
+      font-size: 11px;
+      font-family: var(--font-mono);
+      padding: 3px 10px;
+      border-radius: 100px;
+      letter-spacing: 0.5px;
+    }
+    .settings-status-pill.connected {
+      color: var(--accent);
+      border: 1px solid rgba(45, 212, 191, 0.35);
+      background: rgba(45, 212, 191, 0.08);
+    }
+    .settings-status-pill.sample {
+      color: var(--text2);
+      border: 1px solid var(--border2);
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .settings-intelligence-status {
+      font-size: 12px;
+      color: var(--accent);
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(45, 212, 191, 0.06);
+      border: 1px solid rgba(45, 212, 191, 0.18);
+      margin-bottom: 10px;
+    }
+    .settings-collapse {
+      margin-top: 8px;
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .settings-collapse > summary {
+      cursor: pointer;
+      padding: 10px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text2);
+      list-style: none;
+    }
+    .settings-collapse > summary::-webkit-details-marker { display: none; }
+    .settings-collapse-body {
+      padding: 0 12px 12px;
+      border-top: 1px solid var(--border2);
+    }
+    .settings-radio-row {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .settings-radio-option {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text2);
+    }
+    .settings-slider-wrap {
+      margin: 8px 0 10px;
+    }
+    .settings-slider-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--text3);
+      margin-bottom: 6px;
+    }
+    .settings-threshold-preview {
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--accent);
+      margin: 6px 0 10px;
+    }
+    .settings-manual-list {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px dashed var(--border2);
+      font-size: 12px;
+      color: var(--text3);
+      line-height: 1.45;
+    }
+    .settings-file-row {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .settings-hidden {
+      display: none !important;
     }
     .settings-panel {
       background: var(--bg2);
@@ -982,17 +1119,16 @@
     .technician-report {
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 0;
     }
 
-    .tr-hero {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 16px 18px;
+    .tr-intro {
+      padding: 0 0 14px;
+      margin-bottom: 14px;
+      border-bottom: 1px solid var(--border);
     }
 
-    .tr-hero h2 {
+    .tr-intro h2 {
       margin: 0 0 6px;
       font-size: 16px;
       font-weight: 700;
@@ -1001,51 +1137,31 @@
       letter-spacing: 0.5px;
     }
 
-    .tr-hero .muted {
+    .tr-intro .muted {
       margin: 0;
-      max-width: 720px;
+      max-width: 640px;
       line-height: 1.5;
+      font-size: 13px;
     }
 
-    .tr-summary-grid {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+    .tr-block {
+      padding: 0 0 18px;
+      margin-bottom: 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tr-block:last-child {
+      margin-bottom: 0;
+      padding-bottom: 0;
+      border-bottom: none;
+    }
+
+    .tr-block-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       gap: 10px;
-    }
-
-    .tr-summary-stat {
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px 14px;
-      text-align: center;
-    }
-
-    .tr-summary-stat .val {
-      font-size: 22px;
-      font-weight: 700;
-      font-family: var(--font-mono);
-      color: var(--accent);
-      line-height: 1.2;
-    }
-
-    .tr-summary-stat .lbl {
-      font-size: 10px;
-      font-family: var(--font-mono);
-      color: var(--text3);
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      margin-top: 6px;
-    }
-
-    .tr-section {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 18px;
-    }
-
-    .tr-section .panel-header {
+      flex-wrap: wrap;
       margin-bottom: 12px;
     }
 
@@ -1056,6 +1172,142 @@
       letter-spacing: 0.6px;
       text-transform: uppercase;
       color: var(--text);
+      margin: 0;
+    }
+
+    .tr-link-btn {
+      appearance: none;
+      border: none;
+      background: none;
+      padding: 0;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--accent);
+      letter-spacing: 0.4px;
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+
+    .tr-link-btn:hover {
+      color: #6cf3ff;
+    }
+
+    .tr-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .tr-toolbar-secondary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding-left: 2px;
+    }
+
+    .tr-btn-primary {
+      appearance: none;
+      border: 1px solid rgba(0, 229, 255, 0.55);
+      background: rgba(0, 229, 255, 0.14);
+      color: var(--accent);
+      border-radius: 8px;
+      padding: 9px 16px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .tr-btn-primary:hover {
+      background: rgba(0, 229, 255, 0.22);
+      box-shadow: 0 0 14px rgba(0, 229, 255, 0.18);
+    }
+
+    .tr-btn-ghost {
+      appearance: none;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text2);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      letter-spacing: 0.35px;
+      cursor: pointer;
+      transition: color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .tr-btn-ghost:hover {
+      color: var(--accent);
+      border-color: var(--border2);
+      background: rgba(0, 229, 255, 0.04);
+    }
+
+    .tr-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .tr-summary-stat {
+      padding: 4px 0;
+      text-align: left;
+    }
+
+    .tr-summary-stat .val {
+      font-size: 24px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: var(--accent);
+      line-height: 1.15;
+    }
+
+    .tr-summary-stat .lbl {
+      font-size: 10px;
+      font-family: var(--font-mono);
+      color: var(--text3);
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      margin-top: 4px;
+    }
+
+    .tr-dev-details {
+      margin-top: 12px;
+      font-size: 11px;
+      color: var(--text3);
+    }
+
+    .tr-dev-details summary {
+      cursor: pointer;
+      font-family: var(--font-mono);
+      letter-spacing: 0.35px;
+      color: var(--text2);
+      list-style: none;
+      user-select: none;
+    }
+
+    .tr-dev-details summary::-webkit-details-marker { display: none; }
+
+    .tr-dev-details summary::before {
+      content: "▸ ";
+      color: var(--accent);
+    }
+
+    .tr-dev-details[open] summary::before {
+      content: "▾ ";
+    }
+
+    .tr-dev-details .tr-dev-meta {
+      margin: 8px 0 0;
+      line-height: 1.55;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text3);
     }
 
     .tr-kpi-anomaly-grid {
@@ -1065,36 +1317,58 @@
     }
 
     .tr-anomaly-card {
-      background: var(--bg2);
-      border: 1px solid var(--border2);
-      border-radius: 10px;
-      padding: 12px 14px;
+      background: rgba(18, 22, 31, 0.65);
+      border-radius: 8px;
+      padding: 10px 12px;
+      border: none;
+      box-shadow: inset 0 0 0 1px var(--border);
     }
 
-    .tr-anomaly-card .kpi-name {
-      font-size: 12px;
-      font-weight: 700;
-      font-family: var(--font-mono);
-      color: var(--accent);
-      margin-bottom: 8px;
-    }
-
-    .tr-anomaly-row {
-      font-size: 12px;
-      color: var(--text2);
-      line-height: 1.45;
+    .tr-anomaly-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
       margin-bottom: 4px;
     }
 
-    .tr-anomaly-row:last-child { margin-bottom: 0; }
+    .tr-anomaly-kpi {
+      font-size: 13px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: var(--text);
+      letter-spacing: 0.3px;
+    }
 
-    .tr-anomaly-row span.lbl {
-      color: var(--text3);
+    .tr-anomaly-desc {
+      margin: 0 0 6px;
+      font-size: 12px;
+      color: var(--text2);
+      line-height: 1.4;
+    }
+
+    .tr-anomaly-meta {
+      display: inline-block;
       font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
-      display: block;
-      margin-bottom: 2px;
+      font-family: var(--font-mono);
+      color: var(--text3);
+      letter-spacing: 0.3px;
+      margin-bottom: 8px;
+    }
+
+    .tr-anomaly-action {
+      margin: 0 0 4px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      line-height: 1.4;
+    }
+
+    .tr-anomaly-cause {
+      margin: 0;
+      font-size: 11px;
+      color: var(--text3);
+      line-height: 1.4;
     }
 
     .tr-rec-list {
@@ -1108,15 +1382,15 @@
       grid-template-columns: 28px 1fr auto;
       gap: 10px 12px;
       align-items: start;
-      background: var(--bg2);
-      border: 1px solid var(--border2);
-      border-radius: 10px;
-      padding: 12px 14px;
+      background: rgba(18, 22, 31, 0.5);
+      border-radius: 8px;
+      padding: 10px 12px;
+      box-shadow: inset 0 0 0 1px var(--border);
     }
 
     .tr-rec-row.applied {
       opacity: 0.85;
-      border-color: rgba(0, 229, 255, 0.2);
+      box-shadow: inset 0 0 0 1px rgba(0, 229, 255, 0.2);
     }
 
     .tr-rec-row .nf-checkbox {
@@ -1238,10 +1512,10 @@
     }
 
     .tr-selffix-card {
-      background: var(--bg2);
-      border: 1px solid rgba(0, 229, 255, 0.18);
-      border-radius: 10px;
-      padding: 14px;
+      background: rgba(18, 22, 31, 0.5);
+      border-radius: 8px;
+      padding: 10px 12px;
+      box-shadow: inset 0 0 0 1px rgba(0, 229, 255, 0.15);
     }
 
     .tr-selffix-card p {
@@ -1293,12 +1567,192 @@
       justify-content: center;
     }
 
-    @media (max-width: 1100px) {
-      .tr-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .tr-outcome-btns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+  /* Fleet Health */
+    .fh-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    .fh-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .fh-table th, .fh-table td {
+      padding: 10px 8px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: middle;
+    }
+    .fh-table th { color: var(--text2); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .fh-risk-high { color: #f87171; font-weight: 700; }
+    .fh-risk-med { color: #fbbf24; }
+    .fh-spark { width: 80px; height: 28px; background: rgba(255,255,255,0.04); border-radius: 4px; }
+    .fh-signals { font-size: 11px; color: var(--text2); max-width: 280px; white-space: normal; line-height: 1.45; }
+    .fh-col-head { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+    .fh-col-title { line-height: 1.2; }
+    .fh-col-hint {
+      font-size: 9px;
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
+      color: var(--text3);
+      line-height: 1.2;
+    }
+    .fh-calibration-summary {
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.03);
+      border-radius: 8px;
+      font-size: 12px;
+      color: var(--text2);
+      line-height: 1.45;
+    }
+    .fh-calibration-details {
+      margin-top: 8px;
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.02);
+    }
+    .fh-calibration-details > summary {
+      cursor: pointer;
+      padding: 8px 12px;
+      font-size: 11px;
+      color: var(--text3);
+      list-style: none;
+    }
+    .fh-calibration-details > summary::-webkit-details-marker { display: none; }
+    .fh-calibration-raw {
+      padding: 0 12px 10px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--text3);
+      line-height: 1.45;
+      border-top: 1px solid var(--border2);
+    }
+    body:not(.norfleet-demo) .demo-only { display: none !important; }
+    .fh-link-btn {
+      appearance: none;
+      border: none;
+      background: none;
+      color: var(--accent);
+      font-size: 11px;
+      cursor: pointer;
+      text-decoration: underline;
+      padding: 0;
+      margin-left: 6px;
+    }
+    .fh-row-focus { background: rgba(34, 211, 238, 0.06); }
+    .fh-table tbody tr.fh-urgency-critical { border-left: 3px solid var(--danger); }
+    .fh-table tbody tr.fh-urgency-warning { border-left: 3px solid var(--accent4); }
+    .fh-ttf-pending {
+      font-style: italic;
+      color: var(--text3);
+    }
+
+  /* Technician Dispatch */
+    .td-summary-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .td-summary-stat {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .td-summary-stat .val { display: block; font-size: 20px; font-weight: 700; font-family: var(--font-mono); }
+    .td-summary-stat .val.critical { color: #f87171; }
+    .td-summary-stat .val.high { color: #fbbf24; }
+    .td-summary-stat .lbl { font-size: 11px; color: var(--text2); }
+    .td-dispatch-queue { display: flex; flex-direction: column; gap: 14px; }
+    .td-dispatch-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      background: rgba(255,255,255,0.02);
+      cursor: pointer;
+    }
+    .td-dispatch-card--selected { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(34,211,238,0.2); }
+    .td-dispatch-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 8px; }
+    .td-priority {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 4px 8px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+    .td-priority--critical { background: rgba(248,113,113,0.2); color: #f87171; }
+    .td-priority--high { background: rgba(251,191,36,0.15); color: #fbbf24; }
+    .td-priority--medium { background: rgba(34,211,238,0.12); color: #22d3ee; }
+    .td-priority--low { background: rgba(148,163,184,0.15); color: #94a3b8; }
+    .td-dispatch-title { margin: 0 0 8px; font-size: 15px; }
+    .td-dispatch-metrics { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--text2); margin-bottom: 10px; }
+    .td-dispatch-why, .td-dispatch-do { font-size: 13px; margin-bottom: 10px; }
+    .td-evidence-list { margin: 6px 0 0 18px; padding: 0; font-size: 12px; color: var(--text2); }
+    .td-dispatch-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .td-admin-section { border-left: 3px solid rgba(251,191,36,0.35); padding-left: 12px; }
+    .td-admin-grid { display: grid; gap: 10px; }
+    .td-admin-card {
+      border: 1px dashed rgba(251,191,36,0.35);
+      border-radius: 8px;
+      padding: 12px;
+      background: rgba(251,191,36,0.04);
+    }
+    .td-admin-badge {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #fbbf24;
+    }
+    .td-feedback-form {
+      display: grid;
+      gap: 10px;
+      max-width: 520px;
+    }
+    .td-feedback-form label { display: grid; gap: 4px; font-size: 12px; color: var(--text2); }
+    .td-feedback-form select, .td-feedback-form input, .td-feedback-form textarea {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 8px;
+      font-family: inherit;
+    }
+    .td-dev-tools { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+    .td-status-pill {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      text-transform: uppercase;
+    }
+    .pred-marker-banner {
+      margin: 8px 0 12px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: rgba(248,113,113,0.12);
+      border: 1px solid rgba(248,113,113,0.35);
+      font-size: 12px;
+    }
+
+    @media (max-width: 900px) {
+      .tr-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
     @media (max-width: 720px) {
-      .tr-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .tr-summary-grid { grid-template-columns: 1fr; }
+      .tr-toolbar { flex-direction: column; align-items: stretch; }
+      .tr-toolbar-secondary { padding-left: 0; }
       .tr-rec-row { grid-template-columns: 1fr; }
       .tr-rec-actions { flex-direction: row; flex-wrap: wrap; min-width: 0; }
     }
@@ -1723,7 +2177,7 @@
       <div class="live-badge"><div class="pulse-dot" style="width:5px;height:5px"></div>LIVE</div>
       <span id="live-clock"></span>
       <span>&nbsp;·&nbsp;</span>
-      <span>Norfleet MVP</span>
+      <span id="header-product-label">Norfleet</span>
       <button type="button" class="settings-btn" id="open-settings-btn" aria-label="Open settings" title="Settings">⚙</button>
     </div>
     <div class="header-right">
@@ -1736,10 +2190,10 @@
   </header>
 
   <nav class="nav-bar">
-    <div class="nav-tab active" data-view="builder" onclick="switchView('builder', this)"><span>⬡</span>Fleet Builder</div>
-    <div class="nav-tab" data-view="monitor" onclick="switchView('monitor', this)"><span>◈</span>KPI Monitor</div>
-    <div class="nav-tab" data-view="agents" onclick="switchView('agents', this)"><span>◇</span>AI Agents</div>
-    <div class="nav-tab" data-view="technician-report" onclick="switchView('technician-report', this)"><span>✦</span>Technician Report</div>
+    <div class="nav-tab active" data-view="builder" onclick="switchView('builder', this)"><i class="ti ti-layout-grid nav-tab-icon" aria-hidden="true"></i>Fleet Builder</div>
+    <div class="nav-tab" data-view="monitor" onclick="switchView('monitor', this)"><i class="ti ti-chart-line nav-tab-icon" aria-hidden="true"></i>KPI Monitor</div>
+    <div class="nav-tab" data-view="fleet-health" onclick="switchView('fleet-health', this)"><i class="ti ti-heart-rate-monitor nav-tab-icon" aria-hidden="true"></i>Fleet Health</div>
+    <div class="nav-tab" data-view="technician-report" onclick="switchView('technician-report', this)"><i class="ti ti-clipboard-list nav-tab-icon" aria-hidden="true"></i>Technician Dispatch</div>
   </nav>
 
   <main class="main">
@@ -1806,6 +2260,7 @@
           <button class="panel-action-btn" type="button" id="analyze-with-ai-btn">Analyze with AI</button>
         </div>
         <p class="muted" id="status">Choose a fleet, run AI detection, then watch live series.</p>
+        <div id="pred-marker-banner" class="pred-marker-banner" style="display:none"></div>
         <div class="kpi-list" id="kpi-list"></div>
         <div class="stat-row">
           <div class="stat-mini"><div class="stat-mini-val" id="sum-total">0</div><div class="stat-mini-lbl">Robots</div></div>
@@ -1817,7 +2272,22 @@
       </section>
     </div>
 
-    <div id="view-agents" class="view">
+    <div id="view-fleet-health" class="view">
+      <section class="panel">
+        <div class="panel-header">
+          <div class="panel-title">◉ Predictive Fleet Health</div>
+          <span class="panel-badge badge-cyan">Prediction</span>
+        </div>
+        <div class="fh-toolbar">
+          <button type="button" class="tr-btn-primary" id="fh-refresh-btn">Refresh predictions</button>
+          <button type="button" class="tr-btn-ghost demo-only" id="fh-replay-btn">Fast-forward sim (60×)</button>
+          <span class="muted demo-only" id="fh-replay-status"></span>
+        </div>
+        <div id="fleet-health-root"></div>
+      </section>
+    </div>
+
+    <div id="view-agents" class="view view-suppressed" hidden aria-hidden="true">
       <div class="agents-subnav" role="tablist" aria-label="AI Agents sections">
         <button type="button" class="agents-subtab active" data-agents-sub="overview" id="agents-subtab-overview" onclick="switchAgentSubView('overview')">Overview</button>
         <button type="button" class="agents-subtab" data-agents-sub="builder" id="agents-subtab-builder" onclick="switchAgentSubView('builder')">Agentic AI Builder</button>
@@ -1869,7 +2339,7 @@
 
         <p class="muted agents-overview-footnote">
           Technician takeaway and AI-generated maintenance actions live in
-          <button type="button" class="agents-inline-link" onclick="switchView('technician-report', document.querySelector('.nav-tab[data-view=&quot;technician-report&quot;]'))">Technician Report</button>.
+          <button type="button" class="agents-inline-link" onclick="switchView('technician-report', document.querySelector('.nav-tab[data-view=&quot;technician-report&quot;]'))">Technician Dispatch</button>.
         </p>
       </div>
 
@@ -1947,83 +2417,160 @@
         <div class="panel-title">Settings</div>
         <button type="button" class="panel-action-btn" id="close-settings-btn">Close</button>
       </div>
-      <div class="settings-grid">
-        <section class="settings-panel">
-          <div class="panel-header" style="margin-bottom:10px">
-            <div class="panel-title">AI Provider Settings</div>
-            <span class="panel-badge badge-purple">LLM</span>
-          </div>
-          <div class="settings-row">
-            <label class="field-lbl">Session access token</label>
-            <input id="st-admin-token" type="password" autocomplete="off" placeholder="If the server sets NORFLEET_ADMIN_TOKEN, paste it here" />
-          </div>
-          <div class="settings-actions" style="margin-bottom:6px">
-            <button type="button" class="panel-action-btn" id="st-save-admin-token-btn">Save token</button>
-            <button type="button" class="panel-action-btn" id="st-clear-admin-token-btn">Clear token</button>
-          </div>
-          <p class="settings-warn" style="margin:0 0 12px;font-size:12px" id="st-admin-token-hint"></p>
-          <div class="settings-row">
-            <label class="field-lbl">Provider</label>
-            <select id="st-ai-provider">
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic</option>
-              <option value="gemini">Gemini</option>
-              <option value="mock">Built-in (no API key)</option>
-            </select>
-          </div>
-          <div class="settings-row">
-            <label class="field-lbl">API key</label>
-            <input id="st-ai-key" type="password" placeholder="Provider API key (local use only)" />
-          </div>
-          <div class="settings-row">
-            <label class="field-lbl">Model</label>
-            <input id="st-ai-model" type="text" placeholder="gpt-4o-mini / claude-3-5-sonnet / gemini-1.5-pro" />
-          </div>
-          <label class="builder-check-row nf-check-row">
-            <span>Use built-in responses without calling a provider API</span>
-            <input class="nf-checkbox" id="st-ai-mock" type="checkbox" checked />
-          </label>
-          <div class="settings-actions">
-            <button type="button" class="btn-primary" id="st-save-ai-btn">Save settings</button>
-            <button type="button" class="panel-action-btn" id="st-test-ai-btn">Test connection</button>
-          </div>
-          <div class="settings-status" id="st-ai-status">Status: Built-in (no provider API key)</div>
-        </section>
 
-        <section class="settings-panel">
-          <div class="panel-header" style="margin-bottom:10px">
-            <div class="panel-title">KPI / Robot Data Source</div>
-            <span class="panel-badge badge-cyan">Data</span>
+      <div class="settings-stack">
+        <section class="settings-section">
+          <h3 class="settings-section-title">Fleet Connection</h3>
+          <p class="settings-section-desc">Connect Norfleet to your robot fleet API to receive live telemetry instead of simulated data.</p>
+          <div class="settings-row">
+            <label class="field-lbl" for="st-robot-base">Robot fleet API base URL</label>
+            <input id="st-robot-base" type="text" placeholder="https://fleet.api.example.com" />
           </div>
           <div class="settings-row">
-            <label class="field-lbl">KPI API key</label>
-            <input id="st-kpi-key" type="password" placeholder="kpi-key..." />
+            <label class="field-lbl" for="st-kpi-base">KPI API base URL</label>
+            <input id="st-kpi-base" type="text" placeholder="https://kpi.api.example.com" />
           </div>
           <div class="settings-row">
-            <label class="field-lbl">KPI API base URL</label>
-            <input id="st-kpi-base" type="text" placeholder="https://kpi-api.example.com" />
+            <label class="field-lbl" for="st-kpi-key">Fleet API key</label>
+            <input id="st-kpi-key" type="password" placeholder="Enter your fleet API key" />
           </div>
-          <div class="settings-row">
-            <label class="field-lbl">Robot fleet API base URL</label>
-            <input id="st-robot-base" type="text" placeholder="https://fleet-api.example.com" />
-          </div>
-          <div class="settings-row">
-            <label class="field-lbl">Data mode</label>
-            <select id="st-data-mode">
-              <option value="mock">Sample / local data</option>
-              <option value="csv">Uploaded CSV/logs</option>
-              <option value="external">External API</option>
-            </select>
+          <div class="settings-connection-row">
+            <span class="settings-connection-label">Connection status</span>
+            <span class="settings-status-pill sample" id="st-fleet-connection-pill">Using sample data</span>
           </div>
           <div class="settings-actions">
             <button type="button" class="btn-primary" id="st-save-data-btn">Save settings</button>
-            <button type="button" class="panel-action-btn" id="st-clear-keys-btn">Clear keys</button>
           </div>
-          <div class="settings-status" id="st-data-status">Status: Sample / local</div>
+          <div class="settings-status settings-hidden" id="st-data-status">Status: Using sample data</div>
+          <select id="st-data-mode" class="settings-hidden" aria-hidden="true" tabindex="-1">
+            <option value="mock">Sample local data</option>
+            <option value="csv">Uploaded CSV logs</option>
+            <option value="external">External API</option>
+          </select>
         </section>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">Norfleet Intelligence</h3>
+          <p class="settings-section-desc">AI powered analysis for failure prediction and repair instructions.</p>
+          <div class="settings-intelligence-status" id="st-intelligence-status">Running on built in analysis (no external AI key required)</div>
+          <details class="settings-collapse">
+            <summary>Configure advanced AI settings</summary>
+            <div class="settings-collapse-body">
+              <div class="settings-row">
+                <label class="field-lbl" for="st-ai-provider">Provider</label>
+                <select id="st-ai-provider">
+                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="gemini">Gemini</option>
+                  <option value="mock">Built in (no API key)</option>
+                </select>
+              </div>
+              <div class="settings-row">
+                <label class="field-lbl" for="st-ai-key">API key</label>
+                <input id="st-ai-key" type="password" placeholder="Provider API key (local use only)" />
+              </div>
+              <div class="settings-row">
+                <label class="field-lbl" for="st-ai-model">Model</label>
+                <input id="st-ai-model" type="text" placeholder="gpt 4o mini / claude 3.5 sonnet / gemini 1.5 pro" />
+              </div>
+              <label class="builder-check-row nf-check-row">
+                <span>Use built in responses without calling a provider API</span>
+                <input class="nf-checkbox" id="st-ai-mock" type="checkbox" checked />
+              </label>
+              <div class="settings-actions">
+                <button type="button" class="btn-primary" id="st-save-ai-btn">Save settings</button>
+                <button type="button" class="panel-action-btn" id="st-test-ai-btn">Test connection</button>
+                <button type="button" class="panel-action-btn" id="st-clear-keys-btn">Clear keys</button>
+              </div>
+              <div class="settings-status" id="st-ai-status">Status: Built in (no provider API key)</div>
+            </div>
+          </details>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">Alert Preferences</h3>
+          <p class="settings-section-desc">Choose how you receive notifications when a robot needs attention.</p>
+          <div class="settings-row">
+            <label class="field-lbl" for="st-alert-email">Alert email</label>
+            <input id="st-alert-email" type="email" placeholder="operator@warehouse.example.com" />
+          </div>
+          <div class="settings-row">
+            <label class="field-lbl" for="st-alert-webhook">Slack or webhook URL</label>
+            <input id="st-alert-webhook" type="url" placeholder="https://hooks.example.com/alerts" />
+          </div>
+          <div class="settings-radio-row">
+            <label class="settings-radio-option">
+              <input type="radio" name="st-alert-scope" id="st-alert-critical-only" value="critical" checked />
+              Notify on critical dispatches only
+            </label>
+            <label class="settings-radio-option">
+              <input type="radio" name="st-alert-scope" id="st-alert-all" value="all" />
+              Notify on all predictions
+            </label>
+          </div>
+          <div class="settings-actions">
+            <button type="button" class="btn-primary" id="st-save-alert-prefs-btn">Save settings</button>
+          </div>
+          <div class="settings-status" id="st-alert-prefs-status"></div>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">Alert Sensitivity</h3>
+          <p class="settings-section-desc">Control how aggressively Norfleet flags potential failures. Higher sensitivity catches more issues earlier but may produce more false alerts.</p>
+          <div class="settings-slider-wrap">
+            <div class="settings-slider-labels">
+              <span>Conservative</span>
+              <span>Aggressive</span>
+            </div>
+            <input id="st-alert-sensitivity" type="range" min="0" max="4" step="1" value="0" />
+          </div>
+          <div class="settings-threshold-preview" id="st-alert-threshold-preview">Probability threshold: 0.50 · Health index threshold: 0.30</div>
+          <div class="settings-actions">
+            <button type="button" class="btn-primary" id="st-save-alert-sensitivity-btn">Save settings</button>
+          </div>
+          <div class="settings-status" id="st-alert-sensitivity-status"></div>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">Robot Manual Library</h3>
+          <p class="settings-section-desc">Upload manufacturer manuals for each robot model. Norfleet uses these to generate accurate, model specific repair instructions for technicians.</p>
+          <div class="settings-file-row">
+            <label class="field-lbl" for="st-manual-file">Upload a manual (PDF)</label>
+            <input id="st-manual-file" type="file" accept="application/pdf,.pdf" />
+          </div>
+          <div class="settings-row">
+            <label class="field-lbl" for="st-manual-model">Robot model</label>
+            <select id="st-manual-model">
+              <option value="Stretch">Stretch</option>
+              <option value="LocusBot">LocusBot</option>
+              <option value="Chuck">Chuck</option>
+              <option value="CartConnect">CartConnect</option>
+            </select>
+          </div>
+          <div class="settings-actions">
+            <button type="button" class="panel-action-btn" id="st-manual-upload-btn">Upload</button>
+          </div>
+          <div class="settings-manual-list" id="st-manual-list">No manuals uploaded yet. Add your first manual to enable model specific repair guidance.</div>
+        </section>
+
+        <details class="settings-collapse">
+          <summary>Admin settings</summary>
+          <div class="settings-collapse-body">
+            <div class="settings-row">
+              <label class="field-lbl" for="st-admin-token">Admin access token</label>
+              <input id="st-admin-token" type="password" autocomplete="off" placeholder="Paste admin token if your server requires it" />
+            </div>
+            <div class="settings-actions">
+              <button type="button" class="panel-action-btn" id="st-save-admin-token-btn">Save token</button>
+              <button type="button" class="panel-action-btn" id="st-clear-admin-token-btn">Clear token</button>
+            </div>
+            <p class="settings-warn" style="margin:8px 0 0;font-size:12px" id="st-admin-token-hint"></p>
+          </div>
+        </details>
       </div>
+
       <p class="settings-warn">
-        Local use only. Do not paste production secrets. Keys stay in this browser and are not committed to Git. Built-in assistant mode works without provider API keys.
+        Local use only. Do not paste production secrets. Keys stay in this browser and are not committed to Git. Built in assistant mode works without provider API keys.
       </p>
     </div>
   </div>
@@ -2034,6 +2581,9 @@
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="/contracts/runtimeShapes.js"></script>
   <script src="/webapp.js"></script>
+  <script src="/webappDispatchHelpers.js"></script>
+  <script src="/webappDispatch.js"></script>
 </body>
 </html>

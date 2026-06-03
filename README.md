@@ -1,103 +1,69 @@
 # Norfleet
 
-Norfleet is a self-learning maintenance platform for industrial robot fleets.
+Predictive maintenance MVP for warehouse robot fleets — telemetry → health index → explainable failure predictions → technician dispatch → feedback-driven calibration.
 
-## Current Functional AI Layer
+## Quickstart
 
-- Fleet Builder, KPI Monitor, AI Agents, Agentic AI Builder, Technician Report.
-- Settings modal for provider/API configuration (demo-safe local behavior).
-- Provider abstraction with OpenAI / Anthropic / Gemini / built-in (offline) fallback.
-- Structured AI endpoints for anomaly analysis, technician reports, root-cause, workflow updates, and feedback learning.
-- Local RAG-ready knowledge retrieval from:
-  - `knowledge/robot_manuals/`
-  - `knowledge/sops/`
-  - `knowledge/maintenance_notes/`
-- Deterministic KPI anomaly detection before AI reasoning.
-- Approval-first workflow updates from Technician Report into Agentic AI Builder state.
-- Session token/cost estimate metadata on AI calls.
+```bash
+npm install
+npm run seed:demo    # scripted demo: R-002 mid bearing degradation
+npm start            # http://localhost:5050
+npm test
+npm run validate     # backtest report + exit code on quality gates
+```
 
-## Security Notes
+Optional: copy `.env.example` to `.env` for LLM keys (technician narrative only). Detection and prediction are 100% local.
 
-- Do **not** hardcode production keys.
-- Use `.env.example` placeholders and/or Settings modal input for local demo.
-- Keys entered in Settings are demo-only and not committed to Git.
-- External tools/skills require review before use because tool permissions can expose secrets or modify state.
+## Demo script (~3 minutes)
 
-## Run Locally
+1. **Seed** — `npm run seed:demo` (clears `data/`, loads fleet, R-002 ~58% through bearing wear).
+2. **Start** — `npm start`, open `http://localhost:5050`.
+3. **Fleet Health** — open **Fleet Health** tab. See R-002 health index declining; click **Fast-forward sim (60×)** twice if needed until a prediction appears (failure mode, TTF hours, top signals).
+4. **Technician Report** — **Generate dispatch report**. Review prediction-linked actions (mode, TTF, confidence). Mark reviewed → **Apply**.
+5. **Feedback** — click **False alarm** or **Confirmed** on the action. Note calibration update in Fleet Health footer.
+6. **Re-run validate** (optional) — `npm run validate` after several false-alarm feedbacks in a live session shows tighter thresholds.
 
-1. Install dependencies:
-   - `npm install`
-2. Optional environment setup:
-   - copy `.env.example` to `.env`
-   - fill any needed values:
-     - `OPENAI_API_KEY=`
-     - `ANTHROPIC_API_KEY=`
-     - `GEMINI_API_KEY=`
-     - `KPI_API_KEY=`
-     - `KPI_API_BASE_URL=`
-3. Start server:
-   - `npm start`
-4. Open:
-   - `http://localhost:5050/robotics_kpi_platform.html`
+## Architecture seams
 
-## Settings + built-in assistant
+| Layer | Module | Role |
+|-------|--------|------|
+| Telemetry | `telemetry/simulator.js`, `adapters/robotTelemetry.js`, `adapters/vendorTelemetry.js` | Simulated or vendor adapter → canonical schema |
+| Store | `store/timeSeriesStore.js`, `store/persistence.js` | SQLite (JSON fallback) time-series + fleet/predictions/feedback |
+| Features | `predictor/features.js` | Health index, slopes, failure-mode hints |
+| Predict | `predictor/failurePredictor.js` | Explainable TTF + probability (not reactive detection) |
+| Detect | `anomalyDetector.js` | Reactive KPI anomaly layer (separate) |
+| Feedback | `predictor/calibration.js` | Per-mode threshold tuning from technician outcomes |
+| Platform | `services/norfleetPlatform.js` | Wires adapter → store → predictor → API |
 
-- Open **Settings** (gear in the header).
-- Choose provider/model, optionally paste API key (local use only).
-- Use **Built-in (no API key)** or the built-in toggle to run without calling a provider.
-- If the server sets `NORFLEET_ADMIN_TOKEN`, paste the same value under **Session access token** so the browser sends `x-norfleet-admin-token` on API calls.
-- Save + Test connection.
+Switch telemetry source: set `NORFLEET_TELEMETRY_ADAPTER=vendor` or Settings → data → `telemetryAdapter: vendor`. Implement `adapters/vendorTelemetry.js` TODO(integration) touchpoints — no predictor rewrite.
 
-## Demo/Test Flows
+## Real vs simulated
 
-### A) No API Keys
-- Keep built-in assistant enabled.
-- Go to Technician Report.
-- Click **Generate AI Report**.
-- Review actions and apply updates.
+| Component | Status |
+|-----------|--------|
+| Telemetry stream | **Simulated** (realistic failure precursors; swappable via adapter) |
+| Health index & prediction | **Real** (transparent math, local, explainable) |
+| SQLite / JSON persistence | **Real** (survives restart) |
+| Feedback calibration | **Real** (persisted, measurable on `npm run validate`) |
+| KPI anomaly detection | **Real** (deterministic rules) |
+| Technician repair narrative | **Optional LLM** via `aiProvider.js` (cached; dispatch is deterministic) |
+| Validation backtest | **Real** (known failure times from simulator harness only) |
 
-### B) With API Key
-- In Settings, choose provider and key.
-- Click **Test connection**.
-- Generate AI report and recommendations.
+## Key API endpoints
 
-### C) KPI Monitor Integration
-- In KPI Monitor, run **Detect KPIs (AI)**.
-- Click **Analyze with AI** to jump to Technician Report with anomaly context.
+- `GET /api/predictions` — fleet predictions ranked by TTF
+- `GET /api/robots/:id/health` — HI + prediction + contributing signals
+- `POST /api/sim/replay` — `{ "speed": 60 }` fast-forward simulation
+- `POST /api/ai/generate-technician-report` — prediction-driven dispatch (+ optional LLM narrative)
+- `POST /api/ai/feedback` — `{ actionId, outcome, predictionId?, failureMode? }`
+- `GET/PUT /api/agents/runtime` — server is source of truth for agent builder config
 
-### D) Agent Builder Integration
-- In Technician Report, review and apply workflow actions.
-- Verify updates in AI Agents Overview + Agentic AI Builder.
-- Check Agent Change Log.
+## Quality gates (`npm run validate`)
 
-### E) Feedback Loop
-- Apply or send an action.
-- Click **Save Technician Feedback**.
-- Feedback is stored in session memory and used in future prompts.
+- Recall ≥ 80%
+- False-alarm rate ≤ 20%
+- Median lead time ≥ 8 hours before simulated failure
 
-## AI / Settings Endpoints
+## Security
 
-- `GET /api/settings`
-- `POST /api/settings/ai`
-- `POST /api/settings/data`
-- `POST /api/settings/test-connection`
-- `POST /api/settings/clear-keys`
-
-## Agentic AI Endpoints
-
-- `POST /api/ai/analyze-kpis`
-- `POST /api/ai/generate-technician-report`
-- `POST /api/ai/recommend-agent-updates`
-- `POST /api/ai/root-cause`
-- `POST /api/ai/feedback`
-- `GET /api/ai/runtime`
-
-## Existing Fleet/KPI Endpoints
-
-- `GET /api/robots`
-- `POST /api/robots`
-- `GET /api/fleets`
-- `POST /api/fleets`
-- `POST /api/fleets/:fleetId/detect-kpis`
-- `GET /api/fleets/:fleetId/metrics`
-- `GET /api/stream`
+Do not commit API keys. Use Settings or `.env` locally. Optional `NORFLEET_ADMIN_TOKEN` for admin routes.

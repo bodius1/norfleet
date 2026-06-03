@@ -1,0 +1,294 @@
+
+============================================================
+=== RUN 1 ===
+============================================================
+
+> norfleet@1.0.0 test
+> node --test test/*.test.js
+
+✔ detectKpiAnomalies flags threshold breaches deterministically (2.0464ms)
+✔ detectKpiAnomalies accepts adapter-shaped telemetry (0.2613ms)
+▶ dispatch workflow
+  ✔ acknowledge changes status (8.6536ms)
+  ✔ defer changes status (3.6619ms)
+  ✔ resolve persists workflow state (3.9322ms)
+  ✔ false alarm persists feedback and triggers calibration hook (6.4712ms)
+  ✔ feedback survives repository reload (6.1088ms)
+✔ dispatch workflow (30.8067ms)
+▶ motor_creep detection
+  ✔ fires alert on injected motor_creep validation scenario (2240.2329ms)
+✔ motor_creep detection (2242.3928ms)
+▶ persistence repository
+  ✔ round-trips robots and survives reload (7.5496ms)
+  ✔ stores demo scenario for restart (5.5134ms)
+✔ persistence repository (14.435ms)
+[boot] R-002 telemetry counts: {
+  vibrationRms: 80,
+  motorCurrentA: 80,
+  bearingTempC: 80,
+  batteryVoltage: 80,
+  batteryCapacityPct: 80,
+  cycleTimeMs: 80,
+  trafficDelayMs: 80
+}
+[boot] R-002 hiSeries length: 80
+[boot] R-002 healthIndex: 0.7787311695498806
+[boot] R-002 failureMode: bearing_wear
+[boot] R-002 insufficientData: false health index declining
+[boot] R-002 TTF hours: 0.01
+▶ phase 0 boot health
+  ✔ R-002 signal window is populated after demo seed (3312.3901ms)
+  ✔ R-002 health payload has finite TTF and normalized HI series (2682.4026ms)
+  ✔ start() repopulates telemetry after reset (server boot path) (2783.4956ms)
+✔ phase 0 boot health (8779.2302ms)
+▶ predictor pipeline
+  ✔ returns finite TTF with lead time on degrading signal (447.7662ms)
+  ✔ feedback recalibration tightens after false alarm (0.2227ms)
+✔ predictor pipeline (450.1417ms)
+✔ retrieveRelevantContext returns ranked chunks (6.0092ms)
+✔ captureRepairOutcome writes under knowledge/maintenance_notes (2.7132ms)
+✔ mockTelemetryAdapter supplies fleet history for anomaly detection (1.361ms)
+▶ TelemetryAdapter
+  ✔ normalizes canonical readings (0.8757ms)
+  ✔ simulated adapter emits readings on subscribe (1.2524ms)
+✔ TelemetryAdapter (3.3599ms)
+▶ telemetry simulator
+  ✔ emits monotonic-ish degradation for bearing_wear (1.8645ms)
+  ✔ does not expose true RUL through readings (0.2398ms)
+✔ telemetry simulator (4.1602ms)
+▶ technician dispatch report
+  ✔ builds dispatches from actionable predictions only (3.8458ms)
+  ✔ sorts critical/high before medium/low (0.2114ms)
+  ✔ creates bearing_wear technician dispatch for R-002 (0.466ms)
+  ✔ does not leak undefined/null/NaN into JSON fields (0.2688ms)
+  ✔ keeps adminUpdates separate from dispatches (0.4612ms)
+  ✔ returns graceful emptyState when no actionable predictions (0.4715ms)
+  ✔ alert:false with TTF:null does not create dispatch (0.2915ms)
+  ✔ health trend stable does not create dispatch (0.2651ms)
+  ✔ TTF:null does not become 0 in report JSON (0.5469ms)
+  ✔ only R-002 actionable bearing_wear appears when other robots are stable (1.4937ms)
+  ✔ summary.technicianDispatchCount equals dispatches.length (0.3759ms)
+  ✔ earliestFailureRobotId ignores stable and null-TTF robots (0.305ms)
+  ✔ tiny positive TTF does not render as 0.0 hours in operationalImpact (0.3038ms)
+  ✔ tiny positive TTF uses minute phrasing between 0.1h and 1h (0.1479ms)
+  ✔ null TTF stays Not available and does not create dispatch (0.196ms)
+✔ technician dispatch report (11.1025ms)
+▶ timeSeriesStore
+  ✔ write/query/window (87.9525ms)
+✔ timeSeriesStore (88.9201ms)
+✔ validateToolInput enforces fleet and robot ids (0.7212ms)
+✔ retrieveMaintenanceKnowledge routes through ragMemory (2.57ms)
+▶ validate harness thresholds (DONE #4)
+  ✔ meets recall, false-alarm, and median lead time targets (3681.0408ms)
+  ✔ false-alarm rate drops after feedback calibration (6842.6126ms)
+✔ validate harness thresholds (DONE #4) (10524.7431ms)
+✔ validateAnalyzeKpisInput requires kpiHistory object (0.6947ms)
+✔ validateRootCauseInput enforces required fields (0.3882ms)
+✔ validateFeedbackInput accepts outcome without fixWorked (0.2027ms)
+✔ validateReplayInput bounds speed (0.1548ms)
+ℹ tests 46
+ℹ suites 10
+ℹ pass 46
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 10740.9337
+
+EXIT: 0
+
+============================================================
+=== RUN 2 ===
+============================================================
+
+> norfleet@1.0.0 test
+> node --test test/*.test.js
+
+✔ detectKpiAnomalies flags threshold breaches deterministically (1.1734ms)
+✔ detectKpiAnomalies accepts adapter-shaped telemetry (0.2407ms)
+▶ dispatch workflow
+  ✔ acknowledge changes status (5.9255ms)
+  ✔ defer changes status (3.0726ms)
+  ✔ resolve persists workflow state (3.2589ms)
+  ✔ false alarm persists feedback and triggers calibration hook (4.9779ms)
+  ✔ feedback survives repository reload (3.5979ms)
+✔ dispatch workflow (22.186ms)
+▶ motor_creep detection
+  ✔ fires alert on injected motor_creep validation scenario (2257.1721ms)
+✔ motor_creep detection (2259.1829ms)
+▶ persistence repository
+  ✔ round-trips robots and survives reload (5.4592ms)
+  ✔ stores demo scenario for restart (3.8218ms)
+✔ persistence repository (10.4375ms)
+[boot] R-002 telemetry counts: {
+  vibrationRms: 80,
+  motorCurrentA: 80,
+  bearingTempC: 80,
+  batteryVoltage: 80,
+  batteryCapacityPct: 80,
+  cycleTimeMs: 80,
+  trafficDelayMs: 80
+}
+[boot] R-002 hiSeries length: 80
+[boot] R-002 healthIndex: 0.8006701127572342
+[boot] R-002 failureMode: bearing_wear
+[boot] R-002 insufficientData: false health index declining
+[boot] R-002 TTF hours: 0.02
+▶ phase 0 boot health
+  ✔ R-002 signal window is populated after demo seed (3354.3133ms)
+  ✔ R-002 health payload has finite TTF and normalized HI series (2722.5347ms)
+  ✔ start() repopulates telemetry after reset (server boot path) (2715.1391ms)
+✔ phase 0 boot health (8792.8584ms)
+▶ predictor pipeline
+  ✔ returns finite TTF with lead time on degrading signal (443.1622ms)
+  ✔ feedback recalibration tightens after false alarm (0.3939ms)
+✔ predictor pipeline (446.0431ms)
+✔ retrieveRelevantContext returns ranked chunks (4.0254ms)
+✔ captureRepairOutcome writes under knowledge/maintenance_notes (2.8655ms)
+✔ mockTelemetryAdapter supplies fleet history for anomaly detection (1.2937ms)
+▶ TelemetryAdapter
+  ✔ normalizes canonical readings (0.8542ms)
+  ✔ simulated adapter emits readings on subscribe (1.0342ms)
+✔ TelemetryAdapter (3.0369ms)
+▶ telemetry simulator
+  ✔ emits monotonic-ish degradation for bearing_wear (2.6576ms)
+  ✔ does not expose true RUL through readings (0.3423ms)
+✔ telemetry simulator (5.4505ms)
+▶ technician dispatch report
+  ✔ builds dispatches from actionable predictions only (4.1073ms)
+  ✔ sorts critical/high before medium/low (0.3133ms)
+  ✔ creates bearing_wear technician dispatch for R-002 (0.3692ms)
+  ✔ does not leak undefined/null/NaN into JSON fields (0.266ms)
+  ✔ keeps adminUpdates separate from dispatches (0.3235ms)
+  ✔ returns graceful emptyState when no actionable predictions (0.2944ms)
+  ✔ alert:false with TTF:null does not create dispatch (0.222ms)
+  ✔ health trend stable does not create dispatch (0.2544ms)
+  ✔ TTF:null does not become 0 in report JSON (0.548ms)
+  ✔ only R-002 actionable bearing_wear appears when other robots are stable (1.6573ms)
+  ✔ summary.technicianDispatchCount equals dispatches.length (0.4553ms)
+  ✔ earliestFailureRobotId ignores stable and null-TTF robots (0.3324ms)
+  ✔ tiny positive TTF does not render as 0.0 hours in operationalImpact (0.361ms)
+  ✔ tiny positive TTF uses minute phrasing between 0.1h and 1h (0.1825ms)
+  ✔ null TTF stays Not available and does not create dispatch (0.2021ms)
+✔ technician dispatch report (11.5295ms)
+▶ timeSeriesStore
+  ✔ write/query/window (80.7976ms)
+✔ timeSeriesStore (81.6486ms)
+✔ validateToolInput enforces fleet and robot ids (0.6168ms)
+✔ retrieveMaintenanceKnowledge routes through ragMemory (2.555ms)
+▶ validate harness thresholds (DONE #4)
+  ✔ meets recall, false-alarm, and median lead time targets (3839.1085ms)
+  ✔ false-alarm rate drops after feedback calibration (6983.3343ms)
+✔ validate harness thresholds (DONE #4) (10823.4691ms)
+✔ validateAnalyzeKpisInput requires kpiHistory object (1.2492ms)
+✔ validateRootCauseInput enforces required fields (0.2986ms)
+✔ validateFeedbackInput accepts outcome without fixWorked (0.2421ms)
+✔ validateReplayInput bounds speed (0.2055ms)
+ℹ tests 46
+ℹ suites 10
+ℹ pass 46
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11034.7418
+
+EXIT: 0
+
+============================================================
+=== RUN 3 ===
+============================================================
+
+> norfleet@1.0.0 test
+> node --test test/*.test.js
+
+✔ detectKpiAnomalies flags threshold breaches deterministically (1.0825ms)
+✔ detectKpiAnomalies accepts adapter-shaped telemetry (0.1951ms)
+▶ dispatch workflow
+  ✔ acknowledge changes status (6.2516ms)
+  ✔ defer changes status (3.0369ms)
+  ✔ resolve persists workflow state (5.0231ms)
+  ✔ false alarm persists feedback and triggers calibration hook (4.5557ms)
+  ✔ feedback survives repository reload (3.6481ms)
+✔ dispatch workflow (24.0035ms)
+▶ motor_creep detection
+  ✔ fires alert on injected motor_creep validation scenario (2181.4468ms)
+✔ motor_creep detection (2183.5124ms)
+▶ persistence repository
+  ✔ round-trips robots and survives reload (6.3681ms)
+  ✔ stores demo scenario for restart (4.2244ms)
+✔ persistence repository (11.8501ms)
+[boot] R-002 telemetry counts: {
+  vibrationRms: 80,
+  motorCurrentA: 80,
+  bearingTempC: 80,
+  batteryVoltage: 80,
+  batteryCapacityPct: 80,
+  cycleTimeMs: 80,
+  trafficDelayMs: 80
+}
+[boot] R-002 hiSeries length: 80
+[boot] R-002 healthIndex: 0.7740408022239984
+[boot] R-002 failureMode: bearing_wear
+[boot] R-002 insufficientData: false health index declining
+[boot] R-002 TTF hours: 0.01
+▶ phase 0 boot health
+  ✔ R-002 signal window is populated after demo seed (3201.6965ms)
+  ✔ R-002 health payload has finite TTF and normalized HI series (2692.9ms)
+  ✔ start() repopulates telemetry after reset (server boot path) (2724.587ms)
+✔ phase 0 boot health (8620.1886ms)
+▶ predictor pipeline
+  ✔ returns finite TTF with lead time on degrading signal (443.7602ms)
+  ✔ feedback recalibration tightens after false alarm (0.2765ms)
+✔ predictor pipeline (446.1934ms)
+✔ retrieveRelevantContext returns ranked chunks (3.4698ms)
+✔ captureRepairOutcome writes under knowledge/maintenance_notes (2.3829ms)
+✔ mockTelemetryAdapter supplies fleet history for anomaly detection (1.6951ms)
+▶ TelemetryAdapter
+  ✔ normalizes canonical readings (0.8486ms)
+  ✔ simulated adapter emits readings on subscribe (0.9678ms)
+✔ TelemetryAdapter (2.926ms)
+▶ telemetry simulator
+  ✔ emits monotonic-ish degradation for bearing_wear (1.8049ms)
+  ✔ does not expose true RUL through readings (0.2969ms)
+✔ telemetry simulator (4.4149ms)
+▶ technician dispatch report
+  ✔ builds dispatches from actionable predictions only (3.6027ms)
+  ✔ sorts critical/high before medium/low (0.255ms)
+  ✔ creates bearing_wear technician dispatch for R-002 (0.5877ms)
+  ✔ does not leak undefined/null/NaN into JSON fields (0.3934ms)
+  ✔ keeps adminUpdates separate from dispatches (0.5105ms)
+  ✔ returns graceful emptyState when no actionable predictions (0.3136ms)
+  ✔ alert:false with TTF:null does not create dispatch (0.2989ms)
+  ✔ health trend stable does not create dispatch (0.2605ms)
+  ✔ TTF:null does not become 0 in report JSON (0.5328ms)
+  ✔ only R-002 actionable bearing_wear appears when other robots are stable (0.5148ms)
+  ✔ summary.technicianDispatchCount equals dispatches.length (0.4345ms)
+  ✔ earliestFailureRobotId ignores stable and null-TTF robots (0.2936ms)
+  ✔ tiny positive TTF does not render as 0.0 hours in operationalImpact (0.2757ms)
+  ✔ tiny positive TTF uses minute phrasing between 0.1h and 1h (0.322ms)
+  ✔ null TTF stays Not available and does not create dispatch (0.2126ms)
+✔ technician dispatch report (11.4132ms)
+▶ timeSeriesStore
+  ✔ write/query/window (92.4852ms)
+✔ timeSeriesStore (93.4072ms)
+✔ validateToolInput enforces fleet and robot ids (1.1196ms)
+✔ retrieveMaintenanceKnowledge routes through ragMemory (2.6996ms)
+▶ validate harness thresholds (DONE #4)
+  ✔ meets recall, false-alarm, and median lead time targets (3886.8647ms)
+  ✔ false-alarm rate drops after feedback calibration (6871.6369ms)
+✔ validate harness thresholds (DONE #4) (10759.3067ms)
+✔ validateAnalyzeKpisInput requires kpiHistory object (1.0762ms)
+✔ validateRootCauseInput enforces required fields (0.2357ms)
+✔ validateFeedbackInput accepts outcome without fixWorked (0.1992ms)
+✔ validateReplayInput bounds speed (0.1771ms)
+ℹ tests 46
+ℹ suites 10
+ℹ pass 46
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 10976.0476
+
+EXIT: 0

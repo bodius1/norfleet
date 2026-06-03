@@ -3,13 +3,16 @@
  * External tools/skills require review before use because tool permissions can expose secrets or modify state.
  */
 const ragMemory = require("./ragMemory");
+const { normalizeAgentList } = require("./contracts/runtimeShapes");
 
 function createAgentDefinitions() {
-  return [
+  return normalizeAgentList([
     {
       id: "pre-shift-monitor",
       name: "Pre-Shift Monitor",
       role: "Fleet telemetry and KPI guardrail monitor",
+      assignedTask: "Scanning overnight robot health",
+      failures: "None (2 advisory warnings)",
       persona: "Calm and methodical reliability analyst",
       heartbeatChecklist: [
         "Confirm active fleet.",
@@ -30,9 +33,11 @@ function createAgentDefinitions() {
       confidenceThreshold: 0.8
     },
     {
-      id: "root-cause-agent",
+      id: "root-cause",
       name: "Root Cause Agent",
       role: "Hypothesis ranking from KPI spikes and logs",
+      assignedTask: "Analyzing repeated failures",
+      failures: "3 correlated fault signatures",
       persona: "Data-heavy forensic maintainer",
       heartbeatChecklist: [
         "Inspect anomaly payload.",
@@ -55,6 +60,8 @@ function createAgentDefinitions() {
       id: "maintenance-planner",
       name: "Maintenance Planner",
       role: "Builds actionable checklist from agent findings",
+      assignedTask: "Generating repair checklist",
+      failures: "0 blocking",
       persona: "Execution-first planner",
       heartbeatChecklist: ["Ingest analysis", "Map to tickets", "Assess approval need", "Publish plan"],
       triggerCondition: "After root-cause output",
@@ -71,6 +78,8 @@ function createAgentDefinitions() {
       id: "technician-dispatch",
       name: "Technician Dispatch Agent",
       role: "Converts approved actions into execution tickets",
+      assignedTask: "Waiting for technician assignment",
+      failures: "—",
       persona: "SLA-focused dispatcher",
       heartbeatChecklist: ["Read approvals", "Send tickets", "Track closure", "Report blockers"],
       triggerCondition: "When actions are approved",
@@ -84,9 +93,11 @@ function createAgentDefinitions() {
       confidenceThreshold: 0.75
     },
     {
-      id: "feedback-loop-agent",
+      id: "feedback-loop",
       name: "Feedback Loop Agent",
       role: "Learns from before/after KPI outcomes",
+      assignedTask: "Learning from completed fixes",
+      failures: "1 open verification",
       persona: "Continuous-improvement analyst",
       heartbeatChecklist: ["Ingest feedback", "Compare KPI deltas", "Update memory", "Propose tuning"],
       triggerCondition: "On ticket completion",
@@ -99,7 +110,7 @@ function createAgentDefinitions() {
       tasksCompleted: 0,
       confidenceThreshold: 0.77
     }
-  ];
+  ]);
 }
 
 function validateToolInput(toolName, input) {

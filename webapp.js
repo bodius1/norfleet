@@ -35,8 +35,16 @@ const state = {
   },
   settings: {
     ai: { provider: "mock", model: "mock-norfleet-v1", mockMode: true, hasApiKey: false },
-    data: { dataMode: "mock", kpiApiBaseUrl: "", robotApiBaseUrl: "", hasKpiApiKey: false }
-  }
+    data: { dataMode: "mock", telemetryAdapter: "simulated", kpiApiBaseUrl: "", robotApiBaseUrl: "", hasKpiApiKey: false }
+  },
+  predictions: [],
+  calibration: null,
+  persistenceBackend: "unknown",
+  dispatchReport: null,
+  workOrders: [],
+  dispatchUi: null,
+  selectedDispatchId: null,
+  fleetHealthFocusRobot: null
 };
 
 const SAMPLE_ROBOT_REGISTRY = [
@@ -193,6 +201,107 @@ function escapeHtml(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function safeText(value, fallback = "Not available") {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "number" && !Number.isFinite(value)) return fallback;
+  if (typeof value === "object") return fallback;
+  const s = String(value).trim();
+  if (!s || s === "undefined" || s === "null" || s === "NaN" || s === "[object Object]") return fallback;
+  return s;
+}
+
+function safeNumber(value, fallback = null) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function formatHours(value) {
+  const n = safeNumber(value, null);
+  if (n === null || n <= 0) return "Not available";
+  if (n < 0.1) return "imminent";
+  if (n < 1) {
+    const minutes = Math.max(1, Math.round(n * 60));
+    return `~${minutes} min`;
+  }
+  return `~${n.toFixed(1)}h`;
+}
+
+function formatPercent(value) {
+  const n = safeNumber(value, null);
+  if (n === null) return "Not available";
+  const pct = n <= 1 ? n * 100 : n;
+  return `${Math.round(pct)}%`;
+}
+
+function formatSignalName(name) {
+  const labels = {
+    vibrationRms: "Vibration",
+    bearingTempC: "Bearing temp",
+    motorCurrentA: "Motor current",
+    batteryCapacityPct: "Battery capacity",
+    batteryVoltage: "Battery voltage",
+    pickAccuracyPct: "Pick accuracy",
+    pickActuatorDriftMm: "Pick drift",
+    cycleTimeMs: "Cycle time",
+    travelTimeMs: "Travel time",
+    trafficDelayMs: "Traffic delay",
+    dockAlignmentMm: "Dock alignment"
+  };
+  if (labels[name]) return labels[name];
+  let raw = String(name || "Signal")
+    .replace(/TempC$/, " temp")
+    .replace(/CurrentA$/, " current")
+    .replace(/Rms$/, "")
+    .replace(/Pct$/, "")
+    .replace(/Mm$/, "")
+    .replace(/Ms$/, "");
+  return raw
+    .replace(/([A-Z])/g, " $1")
+    .replace(/\s+/g, " ")
+    .replace(/^./, (c) => c.toUpperCase())
+    .trim();
+}
+
+function signalWeightLevel(weight) {
+  const w = Number(weight);
+  if (!Number.isFinite(w) || w <= 0) return null;
+  if (w > 0.15) return "high";
+  if (w > 0.05) return "medium";
+  return "low";
+}
+
+function formatTopSignalsForDisplay(signals) {
+  return (signals || [])
+    .map((s) => {
+      const name = s.signal || s.name;
+      const weight = s.weight ?? s.contribution ?? 0;
+      const level = signalWeightLevel(weight);
+      if (!level) return null;
+      return `${formatSignalName(name)} · ${level}`;
+    })
+    .filter(Boolean)
+    .slice(0, 3)
+    .join("    ");
+}
+
+const NORFLEET_DEMO_MODE =
+  typeof window !== "undefined" && new URLSearchParams(window.location.search).get("demo") === "1";
+
+function applyDemoModeUi() {
+  if (typeof document === "undefined") return;
+  document.body.classList.toggle("norfleet-demo", NORFLEET_DEMO_MODE);
+  const productLabel = byId("header-product-label");
+  if (productLabel) productLabel.textContent = NORFLEET_DEMO_MODE ? "Norfleet MVP" : "Norfleet";
+}
+
+function tdPriorityClass(priority) {
+  const p = String(priority || "medium").toLowerCase();
+  if (p === "critical") return "td-priority td-priority--critical";
+  if (p === "high") return "td-priority td-priority--high";
+  if (p === "low") return "td-priority td-priority--low";
+  return "td-priority td-priority--medium";
 }
 
 /** Default chart header (x/y units) + rules for KPIs not in the catalog (e.g. AI-detected names). */
@@ -365,7 +474,11 @@ function getSessionAdminToken() {
 /** UI label for provider enum (avoids implying a test double). */
 function displayAiProviderName(provider) {
   const p = String(provider || "").toLowerCase();
-  return p === "mock" ? "Built-in" : String(provider || "—");
+  if (p === "openai") return "OpenAI";
+  if (p === "anthropic") return "Anthropic";
+  if (p === "gemini") return "Gemini";
+  if (p === "mock") return "Built in";
+  return String(provider || "Unknown");
 }
 
 /** UI label for model when using built-in path. */
@@ -385,16 +498,146 @@ function dataModeLabel(mode) {
 }
 
 function aiSettingsStatusLine(mockMode, hasApiKey) {
-  if (mockMode) return "Built-in (no provider API key)";
+  if (mockMode) return "Built in (no provider API key)";
   if (hasApiKey) return "Configured";
   return "No API key";
+}
+
+function intelligenceStatusLine(settings) {
+  const ai = settings?.ai || {};
+  const hasKey = Boolean(ai.hasApiKey);
+  const provider = String(ai.provider || "mock").toLowerCase();
+  if (hasKey && provider !== "mock" && !ai.mockMode) {
+    return `Connected via ${displayAiProviderName(ai.provider)}`;
+  }
+  return "Running on built in analysis (no external AI key required)";
+}
+
+function fleetConnectionStatus(settings) {
+  const data = settings?.data || {};
+  const mode = String(data.dataMode || "mock").toLowerCase();
+  const hasFleetUrl = Boolean(String(data.robotApiBaseUrl || "").trim());
+  const hasKpiUrl = Boolean(String(data.kpiApiBaseUrl || "").trim());
+  const hasKey = Boolean(data.hasKpiApiKey);
+  if (mode === "external" || hasFleetUrl || hasKpiUrl || hasKey) {
+    return { connected: true, text: "Connected" };
+  }
+  return { connected: false, text: "Using sample data" };
+}
+
+function updateFleetConnectionStatusUi(settings) {
+  const status = fleetConnectionStatus(settings);
+  const pill = byId("st-fleet-connection-pill");
+  if (pill) {
+    pill.textContent = status.text;
+    pill.classList.toggle("connected", status.connected);
+    pill.classList.toggle("sample", !status.connected);
+  }
+  const dataStatus = byId("st-data-status");
+  if (dataStatus) dataStatus.textContent = `Status: ${status.text}`;
+}
+
+function updateIntelligenceStatusUi(settings) {
+  const line = byId("st-intelligence-status");
+  if (line) line.textContent = intelligenceStatusLine(settings);
+}
+
+function alertSensitivityThresholds(step) {
+  const s = Math.max(0, Math.min(4, Number(step) || 0));
+  return {
+    probability: 0.5 - s * 0.075,
+    healthIndex: 0.3 + s * 0.05
+  };
+}
+
+function formatAlertThresholdPreview(step) {
+  const t = alertSensitivityThresholds(step);
+  return `Probability threshold: ${t.probability.toFixed(2)} · Health index threshold: ${t.healthIndex.toFixed(2)}`;
+}
+
+function loadAlertPreferencesIntoUi() {
+  const email = localStorage.getItem("norfleet_alert_email") || "";
+  const webhook = localStorage.getItem("norfleet_alert_webhook") || "";
+  const scope = localStorage.getItem("norfleet_alert_scope") || "critical";
+  const emailInput = byId("st-alert-email");
+  const webhookInput = byId("st-alert-webhook");
+  if (emailInput) emailInput.value = email;
+  if (webhookInput) webhookInput.value = webhook;
+  const criticalOnly = byId("st-alert-critical-only");
+  const allPredictions = byId("st-alert-all");
+  if (criticalOnly) criticalOnly.checked = scope !== "all";
+  if (allPredictions) allPredictions.checked = scope === "all";
+  const status = byId("st-alert-prefs-status");
+  if (status) status.textContent = "";
+}
+
+function saveAlertPreferences() {
+  const email = byId("st-alert-email")?.value.trim() || "";
+  const webhook = byId("st-alert-webhook")?.value.trim() || "";
+  const scope = byId("st-alert-all")?.checked ? "all" : "critical";
+  localStorage.setItem("norfleet_alert_email", email);
+  localStorage.setItem("norfleet_alert_webhook", webhook);
+  localStorage.setItem("norfleet_alert_scope", scope);
+  const status = byId("st-alert-prefs-status");
+  if (status) status.textContent = "Saved";
+  showToast("◇", "Alert preferences saved.");
+}
+
+function loadAlertSensitivityIntoUi() {
+  const stored = localStorage.getItem("norfleet_alert_sensitivity");
+  const step = stored == null ? 0 : Number(stored);
+  const slider = byId("st-alert-sensitivity");
+  if (slider) slider.value = String(Number.isFinite(step) ? Math.max(0, Math.min(4, step)) : 0);
+  updateAlertSensitivityPreview();
+  const status = byId("st-alert-sensitivity-status");
+  if (status) status.textContent = "";
+}
+
+function updateAlertSensitivityPreview() {
+  const slider = byId("st-alert-sensitivity");
+  const preview = byId("st-alert-threshold-preview");
+  if (!slider || !preview) return;
+  preview.textContent = formatAlertThresholdPreview(slider.value);
+}
+
+function saveAlertSensitivity() {
+  const slider = byId("st-alert-sensitivity");
+  const step = slider ? Number(slider.value) : 0;
+  localStorage.setItem("norfleet_alert_sensitivity", String(step));
+  const thresholds = alertSensitivityThresholds(step);
+  localStorage.setItem("norfleet_alert_prob_threshold", String(thresholds.probability));
+  localStorage.setItem("norfleet_alert_hi_threshold", String(thresholds.healthIndex));
+  const status = byId("st-alert-sensitivity-status");
+  if (status) status.textContent = "Saved";
+  showToast("◇", "Alert sensitivity saved.");
+}
+
+function populateManualModelDropdown() {
+  const select = byId("st-manual-model");
+  if (!select) return;
+  const defaults = ["Stretch", "LocusBot", "Chuck", "CartConnect"];
+  const fromFleet = (state.robots || []).map((r) => r.model).filter(Boolean);
+  const models = [...new Set([...defaults, ...fromFleet])];
+  const current = select.value;
+  select.innerHTML = "";
+  models.forEach((model) => {
+    const option = document.createElement("option");
+    option.value = model;
+    option.textContent = model;
+    select.appendChild(option);
+  });
+  if (current && models.includes(current)) select.value = current;
+}
+
+function uploadManualStub() {
+  showToast("◇", "Coming soon");
 }
 
 function refreshAdminTokenHint() {
   const hint = byId("st-admin-token-hint");
   if (!hint) return;
   hint.textContent = getSessionAdminToken()
-    ? "A token is saved in this browser and sent as x-norfleet-admin-token when the server expects it."
+    ? "A token is saved in this browser and sent with admin requests when the server expects it."
     : "";
 }
 
@@ -680,20 +923,323 @@ function setDirty(agentId, key, dirty) {
   else set.delete(key);
 }
 
+async function syncAgentRuntimeFromServer() {
+  const RS = typeof RuntimeShapes !== "undefined" ? RuntimeShapes : null;
+  try {
+    const rt = await api("/api/agents/runtime");
+    if (Array.isArray(rt.agents) && rt.agents.length) {
+      const agents = RS ? RS.normalizeAgentList(rt.agents) : rt.agents;
+      const base = createDefaultAgentBuilderConfig();
+      state.agentBuilderConfig = {
+        ...base,
+        agents,
+        workflowOrder: RS ? RS.workflowOrderFromAgents(agents) : base.workflowOrder
+      };
+    }
+    if (rt.calibration) state.calibration = rt.calibration;
+  } catch {
+    try {
+      const legacy = await api("/api/ai/runtime");
+      if (Array.isArray(legacy.agents) && legacy.agents.length) {
+        const agents = RS ? RS.normalizeAgentList(legacy.agents) : legacy.agents;
+        const base = createDefaultAgentBuilderConfig();
+        state.agentBuilderConfig = {
+          ...base,
+          agents,
+          workflowOrder: RS ? RS.workflowOrderFromAgents(agents) : base.workflowOrder
+        };
+      }
+      if (legacy.calibration) state.calibration = legacy.calibration;
+      if (legacy.persistenceBackend) state.persistenceBackend = legacy.persistenceBackend;
+    } catch {
+      ensureAgentBuilderConfig();
+    }
+  }
+}
+
+async function saveAgentRuntimeToServer() {
+  if (!state.agentBuilderConfig?.agents) return;
+  await api("/api/agents/runtime", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agentBuilderConfig: state.agentBuilderConfig.agents })
+  });
+}
+
+async function refreshPredictions() {
+  const res = await api("/api/predictions");
+  const RS = typeof RuntimeShapes !== "undefined" ? RuntimeShapes : null;
+  state.predictions = (res.predictions || []).map((p) => (RS ? RS.normalizePrediction(p) : p));
+  state.calibration = res.calibration || state.calibration;
+  return state.predictions;
+}
+
+function renderPredictionBanner() {
+  const el = byId("pred-marker-banner");
+  if (!el) return;
+  const fleet = currentFleet();
+  const preds = (state.predictions || []).filter(
+    (p) => p.alert && fleet?.robotIds?.includes(p.robotId)
+  );
+  if (!preds.length) {
+    el.style.display = "none";
+    return;
+  }
+  el.style.display = "block";
+  el.innerHTML = preds
+    .map(
+      (p) =>
+        `<strong>${escapeHtml(p.robotId)}</strong> — ${escapeHtml(p.failureMode.replace(/_/g, " "))} · TTF ${escapeHtml(String(p.estimatedTimeToFailureHours))}h · p=${(p.failureProbability * 100).toFixed(0)}%`
+    )
+    .join(" · ");
+}
+
+function miniSparkline(hi) {
+  if (!hi?.length) return "";
+  const vals = hi.map((p) => p.value ?? p);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const range = max - min || 1;
+  const w = 80;
+  const h = 24;
+  const pts = vals
+    .map((v, i) => {
+      const x = (i / Math.max(1, vals.length - 1)) * w;
+      const y = h - ((v - min) / range) * h;
+      return `${x},${y}`;
+    })
+    .join(" ");
+  return `<svg class="fh-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polyline fill="none" stroke="#22d3ee" stroke-width="1.5" points="${pts}"/></svg>`;
+}
+
+function fleetHealthUrgencyClass(healthIndex) {
+  const n = safeNumber(healthIndex, null);
+  if (n === null) return "";
+  const pct = n <= 1 ? n * 100 : n;
+  if (pct < 40) return "fh-urgency-critical";
+  if (pct <= 70) return "fh-urgency-warning";
+  return "";
+}
+
+function formatFleetHealthTtf(p) {
+  const hours = p?.estimatedTimeToFailureHours;
+  if (hours != null && Number.isFinite(Number(hours))) {
+    return escapeHtml(`${hours}h`);
+  }
+  return `<span class="fh-ttf-pending" title="Time to failure estimate requires more telemetry history.">Calculating...</span>`;
+}
+
+async function renderFleetHealth() {
+  const root = byId("fleet-health-root");
+  if (!root) return;
+  const preds = [...(state.predictions || [])].sort(
+    (a, b) => (a.estimatedTimeToFailureHours ?? 999) - (b.estimatedTimeToFailureHours ?? 999)
+  );
+  const rows = await Promise.all(
+    preds.map(async (p) => {
+      let hi = [];
+      try {
+        const health = await api(`/api/robots/${encodeURIComponent(p.robotId)}/health`);
+        hi = health.hiSeries || [];
+      } catch {
+        hi = [];
+      }
+      const sigs = formatTopSignalsForDisplay(p.contributingSignals);
+      const riskClass = (p.failureProbability ?? 0) > 0.7 ? "fh-risk-high" : "fh-risk-med";
+      const ttf = formatFleetHealthTtf(p);
+      const focus = state.fleetHealthFocusRobot === p.robotId;
+      const urgencyClass = fleetHealthUrgencyClass(p.healthIndex);
+      const rowClasses = [focus ? "fh-row-focus" : "", urgencyClass].filter(Boolean).join(" ");
+      const dispatchLink =
+        p.alert && typeof switchView === "function"
+          ? `<button type="button" class="fh-link-btn" data-fh-dispatch="${escapeHtml(p.robotId)}">View dispatch</button>`
+          : "";
+      return `<tr class="${rowClasses}">
+        <td><strong>${escapeHtml(p.robotId)}</strong><br><span class="muted">${escapeHtml(p.robotName || "")}</span></td>
+        <td>${escapeHtml(p.failureMode.replace(/_/g, " "))}</td>
+        <td class="${riskClass}">${formatPercent(p.failureProbability ?? 0)}</td>
+        <td>${ttf}</td>
+        <td>${formatPercent(p.confidence ?? 0)}</td>
+        <td>${formatPercent(p.healthIndex ?? 0)}</td>
+        <td>${miniSparkline(hi)}</td>
+        <td class="fh-signals">${escapeHtml(sigs || "—")} ${dispatchLink}</td>
+      </tr>`;
+    })
+  );
+  const cal = state.calibration
+    ? Object.entries(state.calibration)
+        .map(([m, c]) => `${m}: p≥${c.minProbability} HI≤${c.alertThreshold}`)
+        .join(" · ")
+    : "Default calibration";
+  const emptyRowCopy = NORFLEET_DEMO_MODE
+    ? "No predictions yet. Run fast forward or wait for telemetry."
+    : "No predictions yet. Wait for telemetry.";
+  root.innerHTML = `
+    <table class="fh-table">
+      <thead><tr>
+        <th>Robot</th>
+        <th>Failure mode</th>
+        <th><span class="fh-col-head"><span class="fh-col-title">Failure risk</span><span class="fh-col-hint" title="Likelihood of failure occurring">Likelihood of failure occurring</span></span></th>
+        <th>TTF</th>
+        <th><span class="fh-col-head"><span class="fh-col-title">Model certainty</span><span class="fh-col-hint" title="How sure the model is">How sure the model is</span></span></th>
+        <th>Health index</th>
+        <th>HI trend</th>
+        <th>Top signals</th>
+      </tr></thead>
+      <tbody>${rows.length ? rows.join("") : `<tr><td colspan="8" class="muted">${escapeHtml(emptyRowCopy)}</td></tr>`}</tbody>
+    </table>
+    <div class="fh-calibration-summary">Alerts fire when failure risk exceeds 40% and robot health drops below 40%.</div>
+    <details class="fh-calibration-details">
+      <summary>Technical details</summary>
+      <div class="fh-calibration-raw">Calibration (from feedback): ${escapeHtml(cal)} · persistence: ${escapeHtml(state.persistenceBackend)}</div>
+    </details>
+  `;
+  bindFleetHealthToolbar();
+  root.querySelectorAll("[data-fh-dispatch]").forEach((btn) => {
+    btn.onclick = () => {
+      state.selectedDispatchId = null;
+      switchView("technician-report", getNavTab("technician-report"));
+    };
+  });
+}
+
+let fhReplayBusy = false;
+
+const FH_REFRESH_BTN_LABEL = "Refresh predictions";
+const FH_REPLAY_BTN_LABEL = "Fast-forward sim (60×)";
+
+function setFhReplayBusy(busy) {
+  fhReplayBusy = busy;
+  const refreshBtn = byId("fh-refresh-btn");
+  const replayBtn = byId("fh-replay-btn");
+  const status = byId("fh-replay-status");
+  if (refreshBtn) {
+    refreshBtn.disabled = busy;
+    refreshBtn.setAttribute("aria-busy", busy ? "true" : "false");
+    refreshBtn.textContent = busy ? "⟳ Refresh predictions" : FH_REFRESH_BTN_LABEL;
+  }
+  if (replayBtn && NORFLEET_DEMO_MODE) {
+    replayBtn.disabled = busy;
+    if (!busy) replayBtn.textContent = FH_REPLAY_BTN_LABEL;
+  }
+  if (status && NORFLEET_DEMO_MODE) status.textContent = busy ? "Replaying…" : "";
+}
+
+function bindFleetHealthToolbar() {
+  const refreshBtn = byId("fh-refresh-btn");
+  const replayBtn = byId("fh-replay-btn");
+  if (refreshBtn) {
+    refreshBtn.onclick = () => {
+      if (fhReplayBusy) return;
+      refreshFleetHealth().catch((e) => showToast("⚠", e.message));
+    };
+  }
+  if (replayBtn) {
+    replayBtn.onclick = () => {
+      if (fhReplayBusy) return;
+      runSimReplay(60).catch((e) => showToast("⚠", e.message));
+    };
+  }
+}
+
+async function refreshFleetHealth() {
+  if (fhReplayBusy) return;
+  await refreshPredictions();
+  renderPredictionBanner();
+  await renderFleetHealth();
+}
+
+async function runSimReplay(speed = 60) {
+  if (fhReplayBusy) return;
+  setFhReplayBusy(true);
+  try {
+    await api("/api/sim/replay", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ speed })
+    });
+    setFhReplayBusy(false);
+    await refreshFleetHealth();
+    if (typeof loadDispatchReport === "function") {
+      await loadDispatchReport().catch(() => {});
+      if (byId("view-technician-report")?.classList.contains("active")) renderTechnicianReportView();
+    }
+    showToast("◉", "Simulation fast-forwarded — predictions updated.");
+  } catch (e) {
+    setFhReplayBusy(false);
+    showToast("⚠", e.message);
+    throw e;
+  }
+}
+
+async function submitPredictionFeedback(actionId, outcome) {
+  const rec = getTechnicianRecommendationById(actionId);
+  const payload = {
+    actionId,
+    predictionId: rec?.predictionId,
+    failureMode: rec?.failureMode,
+    outcome,
+    fixWorked: outcome !== "false-alarm",
+    technicianFeedback: `Technician marked ${outcome} for ${rec?.title || actionId}.`
+  };
+  const res = await api("/api/ai/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  state.calibration = res.calibration || state.calibration;
+  state.technicianFeedbackHistory.push({ actionId, outcome, learningUpdate: res.learningUpdate });
+  setTechnicianActionStatus(actionId, "completed");
+  showToast("◇", res.learningUpdate || "Feedback recorded.");
+  await refreshFleetHealth();
+  renderTechnicianReportView();
+}
+
+let fleetHealthPollTimer = null;
+
+function startFleetHealthPoll() {
+  if (fleetHealthPollTimer) return;
+  fleetHealthPollTimer = setInterval(() => {
+    if (fhReplayBusy) return;
+    if (byId("view-fleet-health")?.classList.contains("active")) {
+      refreshFleetHealth().catch(() => {});
+    }
+  }, 3000);
+}
+
+function stopFleetHealthPoll() {
+  if (fleetHealthPollTimer) {
+    clearInterval(fleetHealthPollTimer);
+    fleetHealthPollTimer = null;
+  }
+}
+
 function switchView(id, tabEl) {
+  if (id === "agents") {
+    renderAgentsView();
+    return switchView("builder", getNavTab("builder"));
+  }
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
   document.querySelectorAll(".nav-tab").forEach((t) => t.classList.remove("active"));
   const view = byId(`view-${id}`);
   if (view) view.classList.add("active");
   if (tabEl) tabEl.classList.add("active");
   if (id === "technician-report") {
-    renderTechnicianReport();
+    if (typeof refreshTechnicianDispatch === "function") {
+      refreshTechnicianDispatch().catch((err) => showToast("⚠", err.message));
+    } else {
+      loadDispatchReport()
+        .then(() => renderTechnicianReportView())
+        .catch((err) => showToast("⚠", err.message));
+    }
     return;
   }
-  if (id === "agents") {
-    renderAgentsView();
+  if (id === "fleet-health") {
+    startFleetHealthPoll();
+    refreshFleetHealth().catch((err) => showToast("⚠", err.message));
     return;
   }
+  stopFleetHealthPoll();
   if (id === "monitor") {
     if (!state.fleets.length) {
       showToast("⚠", "Create a fleet in Fleet Builder first.");
@@ -941,9 +1487,9 @@ function renderAgentStatusCardsFromConfig() {
         <div class="agent-field-lbl">Role</div>
         <div class="agent-field-val">${escapeHtml(a.role)}</div>
         <div class="agent-field-lbl">Assigned task</div>
-        <div class="agent-field-val">${escapeHtml(a.assignedTask)}</div>
+        <div class="agent-field-val">${escapeHtml(a.assignedTask || "Monitoring fleet telemetry")}</div>
         <div class="agent-field-lbl">Encountered failures</div>
-        <div class="agent-field-val">${escapeHtml(a.failures)}</div>
+        <div class="agent-field-val">${escapeHtml(a.encounteredFailures ?? a.failures ?? "None reported")}</div>
       </div>`;
     })
     .join("");
@@ -1099,7 +1645,7 @@ function applyPeakShiftPlannerUpdate() {
 function afterTechnicianReportMutation() {
   refreshAgentsSharedUI();
   if (state.agentSubView === "builder") renderAgentBuilder();
-  if (byId("view-technician-report")?.classList.contains("active")) renderTechnicianReport();
+  if (byId("view-technician-report")?.classList.contains("active")) renderTechnicianReportView();
   scheduleLayoutBuilderConnectors();
 }
 
@@ -1189,6 +1735,7 @@ function applyTechnicianAction(actionId) {
     before: "Pending",
     after: "Applied"
   });
+  saveAgentRuntimeToServer().catch(() => {});
   showToast("◇", msg);
   afterTechnicianReportMutation();
 }
@@ -1242,7 +1789,7 @@ async function saveTechnicianFeedbackFlow() {
   });
   setTechnicianActionStatus(target.id, "completed");
   showToast("◇", "Technician feedback saved to memory.");
-  renderTechnicianReport();
+  renderTechnicianReportView();
 }
 
 function trSeverityClass(sev) {
@@ -1320,20 +1867,15 @@ async function analyzeKpiAnomaliesWithAI() {
 }
 
 async function generateAiTechnicianReport() {
-  const analysis = state.technicianReport.lastAnalysis || (await analyzeKpiAnomaliesWithAI());
-  if (!analysis) return;
   const payload = {
-    anomalies: analysis.anomalies || [],
-    activeAgents: state.agentBuilderConfig?.agents || [],
-    robotLogs: state.robots.flatMap((r) => [`${r.id}: status=${r.status}`]),
-    technicianNotes: state.technicianFeedbackHistory,
-    currentWorkflow: state.agentBuilderConfig
+    anomalies: state.technicianReport.lastAnalysis?.anomalies || []
   };
   const res = await api("/api/ai/generate-technician-report", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
+  state.predictions = res.predictions || state.predictions;
   state.technicianReport.generatedSummary = res.reportSummary || null;
   state.technicianReport.generatedActions = Array.isArray(res.actions)
     ? res.actions.map((a, idx) => ({
@@ -1341,11 +1883,15 @@ async function generateAiTechnicianReport() {
         title: a.title || "AI recommendation",
         detail: a.explanation || a.reason || "No explanation provided.",
         severity: a.severity || "Medium",
-        source: a.source || "KPI Monitor",
-        kpiAnomalySource: a.kpiAnomalySource || "KPI Monitor",
+        source: a.source || "Prediction Engine",
+        kpiAnomalySource: a.failureMode || "Predictive",
         affectedRobots: Array.isArray(a.affectedRobots) ? a.affectedRobots.join(", ") : String(a.affectedRobots || "Fleet-wide"),
-        actionType: a.actionType || "Agent workflow update",
+        actionType: a.actionType || "Predictive dispatch",
         buttonLabel: a.buttonLabel || "Apply to Agent Builder",
+        predictionId: a.predictionId,
+        failureMode: a.failureMode,
+        estimatedTimeToFailureHours: a.estimatedTimeToFailureHours,
+        confidence: a.confidence,
         kind:
           String(a.buttonLabel || "").toLowerCase().includes("technician")
             ? "technician_task"
@@ -1357,8 +1903,8 @@ async function generateAiTechnicianReport() {
       }))
     : null;
   updateAiUsage(res.metadata, "Generate AI Report");
-  renderTechnicianReport();
-  showToast("◇", "AI-generated maintenance actions ready.");
+  renderTechnicianReportView();
+  showToast("◇", "Predictive dispatch actions ready.");
 }
 
 async function recommendAgentUpdatesWithAI() {
@@ -1387,14 +1933,6 @@ async function recommendAgentUpdatesWithAI() {
   showToast("◇", `${updates.length} agent workflow updates recommended.`);
 }
 
-function getKpiMonitorBridgeNote() {
-  const keys = Object.keys(state.latestSeries || {});
-  if (keys.length === 0) {
-    return "KPI anomaly source: sample Norfleet monitor data. Run KPI Monitor on a fleet to align live series with this view.";
-  }
-  return `KPI Monitor live series: ${keys.slice(0, 6).join(", ")}${keys.length > 6 ? "…" : ""}. Anomaly cards below combine sample and live-style labels.`;
-}
-
 function formatActionStatusLabel(st) {
   if (st === "sent") return "Sent";
   if (st === "applied") return "Applied";
@@ -1402,7 +1940,15 @@ function formatActionStatusLabel(st) {
   return "";
 }
 
-function renderTechnicianReport() {
+function renderTechnicianReportView() {
+  if (typeof window.renderTechnicianReport === "function") {
+    window.renderTechnicianReport();
+    return;
+  }
+  renderLegacyTechnicianReport();
+}
+
+function renderLegacyTechnicianReport() {
   const root = byId("technician-report-root");
   if (!root) return;
   const sum = computeTechnicianReportSummary();
@@ -1417,24 +1963,36 @@ function renderTechnicianReport() {
       action: a.recommendedAction || "Review and approve recommendation"
     })) || SAMPLE_KPI_ANOMALIES;
 
+  const downtimeDisplay = String(sum.downtimeAvoided || "0h").replace(/^~/, "");
   const summaryHtml = `
     <div class="tr-summary-grid">
-      <div class="tr-summary-stat"><div class="val">${sum.totalAnomalies}</div><div class="lbl">Total anomalies detected</div></div>
-      <div class="tr-summary-stat"><div class="val">${sum.recommendedActions}</div><div class="lbl">Recommended actions</div></div>
-      <div class="tr-summary-stat"><div class="val">${sum.selfFixEligible}</div><div class="lbl">Self-fix eligible</div></div>
-      <div class="tr-summary-stat"><div class="val">${sum.techApproval}</div><div class="lbl">Technician approval required</div></div>
-      <div class="tr-summary-stat"><div class="val">~${sum.downtimeAvoided}</div><div class="lbl">Est. downtime avoided</div></div>
+      <div class="tr-summary-stat">
+        <div class="val">${sum.totalAnomalies}</div>
+        <div class="lbl">${sum.recommendedActions} recommended actions</div>
+      </div>
+      <div class="tr-summary-stat">
+        <div class="val">${sum.selfFixEligible} · ${sum.techApproval}</div>
+        <div class="lbl">Self-fix · needs approval</div>
+      </div>
+      <div class="tr-summary-stat">
+        <div class="val">~${escapeHtml(downtimeDisplay)}</div>
+        <div class="lbl">Est. downtime avoided</div>
+      </div>
     </div>`;
+
+  const devMetaHtml = `Provider: ${escapeHtml(displayAiProviderName(state.aiUsage.provider))} · Model: ${escapeHtml(displayAiModelForUi(state.aiUsage.provider, state.aiUsage.model))} · Estimated tokens: ${escapeHtml(String(state.aiUsage.estimatedTokens))} · Estimated cost: ${escapeHtml(state.aiUsage.costEstimate)} · Calls this session: ${escapeHtml(String(state.aiUsage.callsThisSession))} · Last status: ${escapeHtml(state.aiUsage.lastStatus)}`;
 
   const anomalyCards = anomaliesSource.map(
     (a) => `
     <div class="tr-anomaly-card">
-      <div class="kpi-name">${escapeHtml(a.kpi)}</div>
-      <div class="tr-anomaly-row"><span class="lbl">Anomaly detected</span>${escapeHtml(a.anomaly)}</div>
-      <div class="tr-anomaly-row"><span class="lbl">Affected robot / zone</span>${escapeHtml(a.target)}</div>
-      <div class="tr-anomaly-row"><span class="lbl">Severity</span><span class="severity-badge ${trSeverityClass(a.severity)}">${escapeHtml(a.severity)}</span></div>
-      <div class="tr-anomaly-row"><span class="lbl">Likely cause</span>${escapeHtml(a.cause)}</div>
-      <div class="tr-anomaly-row"><span class="lbl">Recommended action</span>${escapeHtml(a.action)}</div>
+      <div class="tr-anomaly-head">
+        <span class="tr-anomaly-kpi">${escapeHtml(a.kpi)}</span>
+        <span class="severity-badge ${trSeverityClass(a.severity)}">${escapeHtml(a.severity)}</span>
+      </div>
+      <p class="tr-anomaly-desc">${escapeHtml(a.anomaly)}</p>
+      <span class="tr-anomaly-meta">${escapeHtml(a.target)}</span>
+      <p class="tr-anomaly-action">${escapeHtml(a.action)}</p>
+      <p class="tr-anomaly-cause">Likely cause: ${escapeHtml(a.cause)}</p>
     </div>`
   ).join("");
 
@@ -1450,6 +2008,18 @@ function renderTechnicianReport() {
           : "Reviewed"
         : "Draft";
     const statusHtml = `<span class="tr-status-pill">${escapeHtml(statusLabel)}</span>`;
+    const predMeta =
+      rec.failureMode && rec.estimatedTimeToFailureHours != null
+        ? `<span class="tr-source-pill">${escapeHtml(rec.failureMode.replace(/_/g, " "))} · TTF ${rec.estimatedTimeToFailureHours}h · conf ${((rec.confidence ?? 0) * 100).toFixed(0)}%</span>`
+        : "";
+    const outcomeBtns =
+      (st === "applied" || st === "sent") && st !== "completed"
+        ? `<div class="tr-outcome-btns">
+            <button type="button" class="tr-btn-ghost" data-tr-outcome="${escapeHtml(rec.id)}" data-outcome="confirmed-failure">Confirmed</button>
+            <button type="button" class="tr-btn-ghost" data-tr-outcome="${escapeHtml(rec.id)}" data-outcome="false-alarm">False alarm</button>
+            <button type="button" class="tr-btn-ghost" data-tr-outcome="${escapeHtml(rec.id)}" data-outcome="fixed-early">Fixed early</button>
+          </div>`
+        : "";
     const primaryDisabled = done || !reviewed ? "disabled" : "";
     const rowClass = done ? "tr-rec-row applied" : "tr-rec-row";
     return `
@@ -1464,8 +2034,10 @@ function renderTechnicianReport() {
           <span class="tr-action-type">${escapeHtml(rec.actionType)}</span>
           <span>KPI anomaly source: ${escapeHtml(rec.kpiAnomalySource)}</span>
           <span>Affected: ${escapeHtml(rec.affectedRobots)}</span>
+          ${predMeta}
           ${statusHtml}
         </div>
+        ${outcomeBtns}
       </div>
       <div class="tr-rec-actions">
         <button type="button" class="tr-action-btn" data-tr-action="${escapeHtml(rec.id)}" ${primaryDisabled}>
@@ -1492,53 +2064,49 @@ function renderTechnicianReport() {
     .join("");
 
   root.innerHTML = `
-    <div class="tr-hero">
+    <header class="tr-intro">
       <h2>Technician Report</h2>
-      <p class="muted">AI-generated maintenance actions from KPI anomalies, agent signals, and technician feedback. This is the action layer: repair recommendations, workflow changes, and self-improving maintenance.</p>
-      <p class="muted" style="margin-top:8px;margin-bottom:0;font-size:11px">${escapeHtml(getKpiMonitorBridgeNote())}</p>
-    </div>
+      <p class="muted">Turn KPI anomalies into reviewable repair actions and agent workflow updates. Generate a report, approve items, then apply or send to the floor.</p>
+    </header>
 
-    <section class="tr-section" aria-labelledby="tr-summary-h">
-      <div class="panel-header" style="margin-bottom:10px">
-        <div class="tr-section-title" id="tr-summary-h">Report summary</div>
-        <span class="panel-badge badge-cyan">Live</span>
+    <section class="tr-block" aria-labelledby="tr-summary-h">
+      <div class="tr-block-head">
+        <h3 class="tr-section-title" id="tr-summary-h">Report summary</h3>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-        <button type="button" class="panel-action-btn" id="tr-generate-btn">Generate AI Report</button>
-        <button type="button" class="panel-action-btn" id="tr-analyze-btn">Analyze KPI Anomalies</button>
-        <button type="button" class="panel-action-btn" id="tr-recommend-btn">Recommend Agent Updates</button>
-        <button type="button" class="panel-action-btn" id="tr-apply-selected-btn">Apply Selected Updates</button>
-        <button type="button" class="panel-action-btn" id="tr-save-feedback-btn">Save Technician Feedback</button>
+      <div class="tr-toolbar">
+        <button type="button" class="tr-btn-primary" id="tr-generate-btn">Generate dispatch report</button>
+        <div class="tr-toolbar-secondary" role="group" aria-label="Report workflow steps">
+          <button type="button" class="tr-btn-ghost" id="tr-replay-btn">Fast-forward (60×)</button>
+          <button type="button" class="tr-btn-ghost" id="tr-analyze-btn">Analyze KPIs</button>
+          <button type="button" class="tr-btn-ghost" id="tr-recommend-btn">Recommend updates</button>
+          <button type="button" class="tr-btn-ghost" id="tr-apply-selected-btn">Apply selected</button>
+          <button type="button" class="tr-btn-ghost" id="tr-save-feedback-btn">Save feedback</button>
+        </div>
       </div>
       ${summaryHtml}
-      <p class="muted" style="margin-top:10px;margin-bottom:0;font-size:11px">
-        Provider: ${escapeHtml(displayAiProviderName(state.aiUsage.provider))} · Model: ${escapeHtml(displayAiModelForUi(state.aiUsage.provider, state.aiUsage.model))} · Estimated tokens: ${escapeHtml(String(state.aiUsage.estimatedTokens))} · Estimated cost: ${escapeHtml(state.aiUsage.costEstimate)} · Calls this session: ${escapeHtml(String(state.aiUsage.callsThisSession))} · Last status: ${escapeHtml(state.aiUsage.lastStatus)}
-      </p>
+      <details class="tr-dev-details">
+        <summary>Developer / model info</summary>
+        <p class="tr-dev-meta">${devMetaHtml}</p>
+      </details>
     </section>
 
-    <section class="tr-section" aria-labelledby="tr-kpi-h">
-      <div class="panel-header" style="margin-bottom:10px">
-        <div class="tr-section-title" id="tr-kpi-h">KPI anomaly insights</div>
-        <span class="panel-badge badge-purple">KPI Monitor</span>
+    <section class="tr-block" aria-labelledby="tr-kpi-h">
+      <div class="tr-block-head">
+        <h3 class="tr-section-title" id="tr-kpi-h">KPI anomaly insights</h3>
+        <button type="button" class="tr-link-btn" id="tr-open-kpi-monitor">KPI Monitor →</button>
       </div>
       <div class="tr-kpi-anomaly-grid">${anomalyCards}</div>
     </section>
 
-    <section class="tr-section" aria-labelledby="tr-rec-h">
-      <div class="panel-header" style="margin-bottom:10px">
-        <div class="tr-section-title" id="tr-rec-h">Action recommendations / to-do</div>
-        <span class="panel-badge badge-cyan">Queue</span>
-      </div>
-      <p class="muted" style="margin-bottom:12px">Select rows to mark reviewed. Use Implement / Send to Technician / Apply to Agent Builder to close the loop.</p>
+    <section class="tr-block" aria-labelledby="tr-rec-h">
+      <h3 class="tr-section-title" id="tr-rec-h">Action recommendations</h3>
+      <p class="muted" style="margin:8px 0 12px;font-size:12px">Mark reviewed, then apply or send each action.</p>
       <div class="tr-rec-list">${recRows}</div>
     </section>
 
-    <section class="tr-section" aria-labelledby="tr-sf-h">
-      <div class="panel-header" style="margin-bottom:10px">
-        <div class="tr-section-title" id="tr-sf-h">Self-fix / agent update suggestions</div>
-        <span class="panel-badge badge-purple">Agent workflow update</span>
-      </div>
-      <p class="muted" style="margin-bottom:12px">Apply changes directly into the shared Agentic AI Builder state and Overview workflow.</p>
+    <section class="tr-block" aria-labelledby="tr-sf-h">
+      <h3 class="tr-section-title" id="tr-sf-h">Self-fix suggestions</h3>
+      <p class="muted" style="margin:8px 0 12px;font-size:12px">Eligible items sync to Agentic AI Builder when applied.</p>
       <div class="tr-selffix-grid">${selfFixCards}</div>
     </section>
   `;
@@ -1557,15 +2125,26 @@ function renderTechnicianReport() {
     };
   });
 
+  root.querySelectorAll("[data-tr-outcome]").forEach((btn) => {
+    btn.onclick = () => submitPredictionFeedback(btn.dataset.trOutcome, btn.dataset.outcome).catch((e) => showToast("⚠", e.message));
+  });
+
   root.querySelectorAll("[data-tr-action]").forEach((btn) => {
     btn.onclick = () => applyTechnicianAction(btn.dataset.trAction);
   });
 
+  const kpiLink = byId("tr-open-kpi-monitor");
+  if (kpiLink) {
+    kpiLink.onclick = () => switchView("monitor", getNavTab("monitor"));
+  }
+
   byId("tr-generate-btn").onclick = () => generateAiTechnicianReport().catch((e) => showToast("⚠", e.message));
+  const trReplay = byId("tr-replay-btn");
+  if (trReplay) trReplay.onclick = () => runSimReplay(60).catch((e) => showToast("⚠", e.message));
   byId("tr-analyze-btn").onclick = () =>
     analyzeKpiAnomaliesWithAI()
       .then(() => {
-        renderTechnicianReport();
+        renderTechnicianReportView();
         showToast("◇", "KPI anomalies analyzed.");
       })
       .catch((e) => showToast("⚠", e.message));
@@ -1886,6 +2465,7 @@ async function api(url, options = {}) {
 function openSettingsModal() {
   const modal = byId("settings-modal");
   if (!modal) return;
+  populateManualModelDropdown();
   modal.classList.add("active");
   modal.setAttribute("aria-hidden", "false");
 }
@@ -1921,7 +2501,11 @@ async function loadSettingsIntoUi() {
     Boolean(state.settings.ai.mockMode),
     Boolean(state.settings.ai.hasApiKey)
   )}`;
-  byId("st-data-status").textContent = `Status: ${dataModeLabel(state.settings.data.dataMode)}`;
+  updateFleetConnectionStatusUi(state.settings);
+  updateIntelligenceStatusUi(state.settings);
+  loadAlertPreferencesIntoUi();
+  loadAlertSensitivityIntoUi();
+  populateManualModelDropdown();
   const adminInput = byId("st-admin-token");
   if (adminInput) adminInput.value = "";
   refreshAdminTokenHint();
@@ -1940,16 +2524,29 @@ async function saveAiSettings() {
   localStorage.setItem("norfleet_ai_provider", provider);
   localStorage.setItem("norfleet_ai_model", model);
   localStorage.setItem("norfleet_ai_mock", String(mockMode));
+  state.settings.ai = {
+    ...state.settings.ai,
+    provider,
+    model,
+    mockMode,
+    hasApiKey: Boolean(apiKey) || state.settings.ai.hasApiKey
+  };
   byId("st-ai-status").textContent = `Status: ${mockMode ? aiSettingsStatusLine(true, false) : apiKey ? "Configured" : "Saved (no key)"}`;
+  updateIntelligenceStatusUi(state.settings);
   showToast("◇", "AI settings saved.");
 }
 
 async function saveDataSettings() {
+  const robotApiBaseUrl = byId("st-robot-base").value.trim();
+  const kpiApiBaseUrl = byId("st-kpi-base").value.trim();
+  const kpiApiKey = byId("st-kpi-key").value.trim();
+  const dataMode = robotApiBaseUrl || kpiApiBaseUrl || kpiApiKey ? "external" : "mock";
+  byId("st-data-mode").value = dataMode;
   const payload = {
-    kpiApiKey: byId("st-kpi-key").value.trim(),
-    kpiApiBaseUrl: byId("st-kpi-base").value.trim(),
-    robotApiBaseUrl: byId("st-robot-base").value.trim(),
-    dataMode: byId("st-data-mode").value
+    kpiApiKey,
+    kpiApiBaseUrl,
+    robotApiBaseUrl,
+    dataMode
   };
   await api("/api/settings/data", {
     method: "POST",
@@ -1957,8 +2554,15 @@ async function saveDataSettings() {
     body: JSON.stringify(payload)
   });
   localStorage.setItem("norfleet_data_mode", payload.dataMode);
-  byId("st-data-status").textContent = `Status: ${dataModeLabel(payload.dataMode)}`;
-  showToast("◇", "Data source settings saved.");
+  state.settings.data = {
+    ...state.settings.data,
+    dataMode: payload.dataMode,
+    kpiApiBaseUrl: payload.kpiApiBaseUrl,
+    robotApiBaseUrl: payload.robotApiBaseUrl,
+    hasKpiApiKey: Boolean(kpiApiKey) || state.settings.data.hasKpiApiKey
+  };
+  updateFleetConnectionStatusUi(state.settings);
+  showToast("◇", "Fleet connection settings saved.");
 }
 
 async function testAiConnection() {
@@ -1973,6 +2577,10 @@ async function clearSettingsKeys() {
   byId("st-ai-key").value = "";
   byId("st-kpi-key").value = "";
   byId("st-ai-status").textContent = "Status: Keys cleared";
+  if (state.settings?.ai) state.settings.ai.hasApiKey = false;
+  if (state.settings?.data) state.settings.data.hasKpiApiKey = false;
+  updateIntelligenceStatusUi(state.settings);
+  updateFleetConnectionStatusUi(state.settings);
   showToast("◇", "Stored keys cleared.");
 }
 
@@ -2386,6 +2994,14 @@ function updateSummary(summary) {
 async function loadInitial() {
   state.robots = await api("/api/robots");
   state.fleets = await api("/api/fleets");
+  await syncAgentRuntimeFromServer();
+  try {
+    const runtime = await api("/api/ai/runtime");
+    if (runtime.persistenceBackend) state.persistenceBackend = runtime.persistenceBackend;
+  } catch {
+    /* optional */
+  }
+  await refreshPredictions().catch(() => {});
   renderRobots();
   renderFleets();
 }
@@ -2474,6 +3090,10 @@ async function loadMetricsAndStream() {
   state.stream.onmessage = (event) => {
     const data = JSON.parse(event.data);
     state.lastMetricsSnapshot = { fleetId: data.fleetId, kpis: data.kpis, series: data.series };
+    if (data.predictions) {
+      state.predictions = data.predictions;
+      renderPredictionBanner();
+    }
     syncCharts(data.series);
     renderKpis(data.kpis);
     updateSummary(data.summary);
@@ -2486,6 +3106,7 @@ async function loadMetricsAndStream() {
 }
 
 function bindEvents() {
+  applyDemoModeUi();
   byId("add-robot-btn").onclick = () => addRobot().catch((e) => showToast("⚠", e.message));
   byId("create-fleet-btn").onclick = () => createFleet().catch((e) => showToast("⚠", e.message));
   byId("detect-kpis-btn").onclick = () => detectKpisForFleet().catch((e) => showToast("⚠", e.message));
@@ -2493,7 +3114,7 @@ function bindEvents() {
     analyzeKpiAnomaliesWithAI()
       .then(() => {
         switchView("technician-report", getNavTab("technician-report"));
-        renderTechnicianReport();
+        renderTechnicianReportView();
       })
       .catch((e) => showToast("⚠", e.message));
 
@@ -2506,6 +3127,10 @@ function bindEvents() {
   byId("st-save-data-btn").onclick = () => saveDataSettings().catch((e) => showToast("⚠", e.message));
   byId("st-test-ai-btn").onclick = () => testAiConnection().catch((e) => showToast("⚠", e.message));
   byId("st-clear-keys-btn").onclick = () => clearSettingsKeys().catch((e) => showToast("⚠", e.message));
+  byId("st-save-alert-prefs-btn")?.addEventListener("click", () => saveAlertPreferences());
+  byId("st-save-alert-sensitivity-btn")?.addEventListener("click", () => saveAlertSensitivity());
+  byId("st-alert-sensitivity")?.addEventListener("input", () => updateAlertSensitivityPreview());
+  byId("st-manual-upload-btn")?.addEventListener("click", () => uploadManualStub());
   const saveAdmin = byId("st-save-admin-token-btn");
   const clearAdmin = byId("st-clear-admin-token-btn");
   if (saveAdmin) saveAdmin.onclick = () => saveSessionAdminToken();
@@ -2513,8 +3138,12 @@ function bindEvents() {
   byId("st-ai-provider").onchange = (e) => {
     byId("st-ai-model").value = providerDefaultModel(e.target.value);
   };
+  loadAlertPreferencesIntoUi();
+  loadAlertSensitivityIntoUi();
 }
 
+window.runSimReplay = runSimReplay;
+window.submitPredictionFeedback = submitPredictionFeedback;
 window.switchView = switchView;
 window.switchAgentSubView = switchAgentSubView;
 window.selectAgent = selectAgent;
@@ -2525,6 +3154,9 @@ window.createAgentFromRecommendation = createAgentFromRecommendation;
 window.updateAgentFromRecommendation = updateAgentFromRecommendation;
 window.setTechnicianReviewed = setTechnicianReviewed;
 
+setInterval(() => {
+  refreshPredictions().then(() => renderPredictionBanner()).catch(() => {});
+}, 8000);
 setInterval(updateClock, 1000);
 updateClock();
 bindEvents();

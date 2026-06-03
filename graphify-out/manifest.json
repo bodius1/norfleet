@@ -1,0 +1,187 @@
+{
+  "C:\\Norfleet-experiment\\aiProvider.js": {
+    "mtime": 1779501336.8049092,
+    "ast_hash": "1410ef889f5fa3475b458207fdaf5ec0",
+    "semantic_hash": "1410ef889f5fa3475b458207fdaf5ec0"
+  },
+  "C:\\Norfleet-experiment\\anomalyDetector.js": {
+    "mtime": 1779501336.8059115,
+    "ast_hash": "880d2956af6656b4ee74a46265a11b76",
+    "semantic_hash": "880d2956af6656b4ee74a46265a11b76"
+  },
+  "C:\\Norfleet-experiment\\package.json": {
+    "mtime": 1779501338.3529851,
+    "ast_hash": "609204c17d57061969694cee06c2462b",
+    "semantic_hash": "609204c17d57061969694cee06c2462b"
+  },
+  "C:\\Norfleet-experiment\\ragMemory.js": {
+    "mtime": 1779501338.3560073,
+    "ast_hash": "48a3c9a76e002ecc64290a85f0bcaf76",
+    "semantic_hash": "48a3c9a76e002ecc64290a85f0bcaf76"
+  },
+  "C:\\Norfleet-experiment\\server.js": {
+    "mtime": 1779511875.790944,
+    "ast_hash": "5ab5fedd4d195fe7a7ddf5448b7edf52",
+    "semantic_hash": "5ab5fedd4d195fe7a7ddf5448b7edf52"
+  },
+  "C:\\Norfleet-experiment\\toolExecutor.js": {
+    "mtime": 1779502010.2381637,
+    "ast_hash": "069ab193c95032b6d10828708b4d11be",
+    "semantic_hash": "069ab193c95032b6d10828708b4d11be"
+  },
+  "C:\\Norfleet-experiment\\validation.js": {
+    "mtime": 1779501338.3693402,
+    "ast_hash": "03d1c408cfbe92419c126f9d940df032",
+    "semantic_hash": "03d1c408cfbe92419c126f9d940df032"
+  },
+  "C:\\Norfleet-experiment\\webapp.js": {
+    "mtime": 1779502347.3503628,
+    "ast_hash": "0a7e0658619c9961ac2b0dcfb0bfb939",
+    "semantic_hash": "0a7e0658619c9961ac2b0dcfb0bfb939"
+  },
+  "C:\\Norfleet-experiment\\.claude\\settings.local.json": {
+    "mtime": 1779567226.4430804,
+    "ast_hash": "400bf331ded7cd8d68d67ef29d05fe44",
+    "semantic_hash": "400bf331ded7cd8d68d67ef29d05fe44"
+  },
+  "C:\\Norfleet-experiment\\.cursor\\mcp.json": {
+    "mtime": 1779501336.8001604,
+    "ast_hash": "6841288f47c2a96c2ffabf2eadd5281f",
+    "semantic_hash": "6841288f47c2a96c2ffabf2eadd5281f"
+  },
+  "C:\\Norfleet-experiment\\.vscode\\settings.json": {
+    "mtime": 1779501336.8023858,
+    "ast_hash": "377d072e137022223a370760763420bb",
+    "semantic_hash": "377d072e137022223a370760763420bb"
+  },
+  "C:\\Norfleet-experiment\\adapters\\robotTelemetry.js": {
+    "mtime": 1779501336.8038936,
+    "ast_hash": "beb7de1f7e68c15d2e8342adcf6ddd42",
+    "semantic_hash": "beb7de1f7e68c15d2e8342adcf6ddd42"
+  },
+  "C:\\Norfleet-experiment\\adapters\\vendorTelemetry.js": {
+    "mtime": 1779501336.8038936,
+    "ast_hash": "6bdc5094b4e252dae8fcc1e22e3eacf9",
+    "semantic_hash": "6bdc5094b4e252dae8fcc1e22e3eacf9"
+  },
+  "C:\\Norfleet-experiment\\config\\settings.js": {
+    "mtime": 1779501336.8064508,
+    "ast_hash": "767c9617e92020f25a1aa95c8504ebaf",
+    "semantic_hash": "767c9617e92020f25a1aa95c8504ebaf"
+  },
+  "C:\\Norfleet-experiment\\contracts\\runtimeShapes.js": {
+    "mtime": 1779511859.6718302,
+    "ast_hash": "58d73a4a466aa8a27ba9424e735058d1",
+    "semantic_hash": "58d73a4a466aa8a27ba9424e735058d1"
+  },
+  "C:\\Norfleet-experiment\\predictor\\calibration.js": {
+    "mtime": 1779515729.7156174,
+    "ast_hash": "43cc1844bb582d85eeee314ac518f559",
+    "semantic_hash": "43cc1844bb582d85eeee314ac518f559"
+  },
+  "C:\\Norfleet-experiment\\predictor\\failurePredictor.js": {
+    "mtime": 1779517300.047786,
+    "ast_hash": "178ff3d034c24f379478938726992fd2",
+    "semantic_hash": "178ff3d034c24f379478938726992fd2"
+  },
+  "C:\\Norfleet-experiment\\predictor\\features.js": {
+    "mtime": 1779517227.7264135,
+    "ast_hash": "8a6bf90f10da3d5b50ddf5aef28a3575",
+    "semantic_hash": "8a6bf90f10da3d5b50ddf5aef28a3575"
+  },
+  "C:\\Norfleet-experiment\\scripts\\generate-architecture-drawio.js": {
+    "mtime": 1779501338.3575664,
+    "ast_hash": "1494453ccd9e01047f158a5b7715f314",
+    "semantic_hash": "1494453ccd9e01047f158a5b7715f314"
+  },
+  "C:\\Norfleet-experiment\\scripts\\seedDemo.js": {
+    "mtime": 1779501338.3585773,
+    "ast_hash": "a587830b1f07c5f2dc96bee63f0cfc12",
+    "semantic_hash": "a587830b1f07c5f2dc96bee63f0cfc12"
+  },
+  "C:\\Norfleet-experiment\\scripts\\validate.js": {
+    "mtime": 1779517579.6701055,
+    "ast_hash": "733f8351d2985f0d0bbf363cb65b5ce7",
+    "semantic_hash": "733f8351d2985f0d0bbf363cb65b5ce7"
+  },
+  "C:\\Norfleet-experiment\\services\\norfleetPlatform.js": {
+    "mtime": 1779517920.624868,
+    "ast_hash": "0b6f536d5c1e8c3e18fb1d32c84efb18",
+    "semantic_hash": "0b6f536d5c1e8c3e18fb1d32c84efb18"
+  },
+  "C:\\Norfleet-experiment\\state\\runtimeStore.js": {
+    "mtime": 1779501338.3605835,
+    "ast_hash": "3225a07906da77f2a64c6fdc0380921f",
+    "semantic_hash": "3225a07906da77f2a64c6fdc0380921f"
+  },
+  "C:\\Norfleet-experiment\\store\\persistence.js": {
+    "mtime": 1779511803.0723183,
+    "ast_hash": "695632fe0903aebfa932cdedb6613574",
+    "semantic_hash": "695632fe0903aebfa932cdedb6613574"
+  },
+  "C:\\Norfleet-experiment\\store\\timeSeriesStore.js": {
+    "mtime": 1779511750.13476,
+    "ast_hash": "10974352d78c7d417227632bc2c26690",
+    "semantic_hash": "10974352d78c7d417227632bc2c26690"
+  },
+  "C:\\Norfleet-experiment\\telemetry\\simulator.js": {
+    "mtime": 1779517237.6053498,
+    "ast_hash": "6e5e64e3d3747e15fed20156d8674b8a",
+    "semantic_hash": "6e5e64e3d3747e15fed20156d8674b8a"
+  },
+  "C:\\Norfleet-experiment\\test\\anomalyDetector.test.js": {
+    "mtime": 1779501338.3625772,
+    "ast_hash": "840749fc11b7db502093203f3ca1ca13",
+    "semantic_hash": "840749fc11b7db502093203f3ca1ca13"
+  },
+  "C:\\Norfleet-experiment\\test\\persistence.test.js": {
+    "mtime": 1779501338.364091,
+    "ast_hash": "1201b31673c4872602d08da135d32841",
+    "semantic_hash": "1201b31673c4872602d08da135d32841"
+  },
+  "C:\\Norfleet-experiment\\test\\predictor.test.js": {
+    "mtime": 1779501338.364091,
+    "ast_hash": "0adb68691faa28391f3bd3de8c24bf5a",
+    "semantic_hash": "0adb68691faa28391f3bd3de8c24bf5a"
+  },
+  "C:\\Norfleet-experiment\\test\\ragMemory.test.js": {
+    "mtime": 1779501338.3646586,
+    "ast_hash": "908059adc6f56f2a0e6045a258b362ba",
+    "semantic_hash": "908059adc6f56f2a0e6045a258b362ba"
+  },
+  "C:\\Norfleet-experiment\\test\\robotTelemetry.test.js": {
+    "mtime": 1779501338.3656707,
+    "ast_hash": "acdb75c362d7035d5fd3c522c63fccaa",
+    "semantic_hash": "acdb75c362d7035d5fd3c522c63fccaa"
+  },
+  "C:\\Norfleet-experiment\\test\\robotTelemetryAdapter.test.js": {
+    "mtime": 1779501338.3656707,
+    "ast_hash": "1d8ec0cfe38454d2dcee53f0b9b50464",
+    "semantic_hash": "1d8ec0cfe38454d2dcee53f0b9b50464"
+  },
+  "C:\\Norfleet-experiment\\test\\simulator.test.js": {
+    "mtime": 1779501338.3656707,
+    "ast_hash": "2df27c63312504dc453184f56e99280a",
+    "semantic_hash": "2df27c63312504dc453184f56e99280a"
+  },
+  "C:\\Norfleet-experiment\\test\\timeSeriesStore.test.js": {
+    "mtime": 1779501338.3671887,
+    "ast_hash": "a8e0501f1c5d1d189cf545e8ff9380e0",
+    "semantic_hash": "a8e0501f1c5d1d189cf545e8ff9380e0"
+  },
+  "C:\\Norfleet-experiment\\test\\toolExecutor.test.js": {
+    "mtime": 1779501338.3671887,
+    "ast_hash": "614ac4cf803a951ace63d66d6c34d1ef",
+    "semantic_hash": "614ac4cf803a951ace63d66d6c34d1ef"
+  },
+  "C:\\Norfleet-experiment\\test\\validateHarness.test.js": {
+    "mtime": 1779515319.7254624,
+    "ast_hash": "5a22c0bf7a0a53b94700680e11364768",
+    "semantic_hash": "5a22c0bf7a0a53b94700680e11364768"
+  },
+  "C:\\Norfleet-experiment\\test\\validation.test.js": {
+    "mtime": 1779501338.3683321,
+    "ast_hash": "29fcb8bb461da06d8c3a716133bc403c",
+    "semantic_hash": "29fcb8bb461da06d8c3a716133bc403c"
+  }
+}

@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Norfleet Graphify Graph</title>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: #0f1419; color: #e6edf3; }
+    header {
+      display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center;
+      padding: 0.75rem 1rem; border-bottom: 1px solid #30363d; background: #161b22;
+    }
+    header h1 { margin: 0; font-size: 1rem; font-weight: 600; }
+    input, select, button {
+      background: #21262d; border: 1px solid #30363d; color: #e6edf3;
+      border-radius: 6px; padding: 0.35rem 0.6rem; font-size: 0.85rem;
+    }
+    button { cursor: pointer; }
+    button:hover { background: #30363d; }
+  #layout { display: grid; grid-template-columns: 1fr 320px; height: calc(100vh - 52px); }
+    #graph { background: #0d1117; min-height: 300px; }
+    #panel {
+      border-left: 1px solid #30363d; padding: 1rem; overflow: auto; font-size: 0.82rem;
+      background: #161b22;
+    }
+    #panel h2 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+    #panel dl { margin: 0; }
+    #panel dt { color: #8b949e; margin-top: 0.5rem; }
+    #panel dd { margin: 0.15rem 0 0; word-break: break-word; }
+    #status { color: #8b949e; font-size: 0.8rem; flex: 1; min-width: 200px; }
+    .warn {
+      margin: 1rem; padding: 1rem; background: #3d2a00; border: 1px solid #9e6a03;
+      border-radius: 8px; font-size: 0.9rem;
+    }
+    a { color: #58a6ff; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Graphify — Norfleet</h1>
+    <input id="search" type="search" placeholder="Search nodes…" />
+    <select id="communityFilter"><option value="">All communities</option></select>
+    <select id="fileFilter"><option value="">All files</option></select>
+    <button id="fitBtn" type="button">Fit view</button>
+    <button id="reloadBtn" type="button">Reload graph.json</button>
+    <span id="status">Loading…</span>
+  </header>
+  <div id="fileWarn" class="warn" hidden>
+    <strong>Could not load graph.json.</strong> Browsers block <code>fetch</code> on <code>file://</code>.
+    Serve this folder locally, then open this page:
+    <pre>npx --yes serve graphify-out -p 8765</pre>
+    Then visit <a href="http://localhost:8765/graph.html">http://localhost:8765/graph.html</a>
+    — or pick the file manually:
+    <input id="filePicker" type="file" accept=".json,application/json" />
+  </div>
+  <div id="layout">
+    <div id="graph"></div>
+    <aside id="panel">
+      <h2>Node details</h2>
+      <p id="hint">Click a node to inspect it.</p>
+      <dl id="details" hidden></dl>
+    </aside>
+  </div>
+
+  <script>
+    const PALETTE = [
+      "#58a6ff", "#3fb950", "#d29922", "#f85149", "#a371f7",
+      "#39c5cf", "#db6d28", "#ff7b72", "#79c0ff", "#56d364",
+      "#e3b341", "#ffa657", "#bc8cff", "#76e3ea", "#ff9492",
+      "#8b949e", "#6e7681", "#484f58", "#238636", "#1f6feb"
+    ];
+
+    let network = null;
+    let rawGraph = null;
+    let allNodes = [];
+    let allEdges = [];
+
+    const statusEl = document.getElementById("status");
+    const fileWarn = document.getElementById("fileWarn");
+    const detailsEl = document.getElementById("details");
+    const hintEl = document.getElementById("hint");
+
+    function communityColor(c) {
+      return PALETTE[Math.abs(Number(c) || 0) % PALETTE.length];
+    }
+
+    function buildVisData(graph, filters) {
+      const { q, community, file } = filters;
+      const qLower = (q || "").trim().toLowerCase();
+      const nodes = graph.nodes.filter((n) => {
+        if (community !== "" && String(n.community) !== community) return false;
+        if (file && n.source_file !== file) return false;
+        if (qLower && !(n.label || "").toLowerCase().includes(qLower) &&
+            !(n.source_file || "").toLowerCase().includes(qLower)) return false;
+        return true;
+      });
+      const ids = new Set(nodes.map((n) => n.id));
+      const visNodes = nodes.map((n) => ({
+        id: n.id,
+        label: n.label.length > 28 ? n.label.slice(0, 26) + "…" : n.label,
+        title: [
+          n.label,
+          n.source_file ? `file: ${n.source_file}` : "",
+          n.source_location ? `loc: ${n.source_location}` : "",
+          n.community != null ? `community: ${n.community}` : ""
+        ].filter(Boolean).join("\n"),
+        color: {
+          background: communityColor(n.community),
+          border: "#30363d",
+          highlight: { background: "#fff", border: "#58a6ff" }
+        },
+        font: { color: "#e6edf3", size: 11 },
+        shape: n.file_type === "doc" ? "box" : "dot",
+        size: n.label && n.label.endsWith(".js") ? 14 : 10
+      }));
+
+      const visEdges = graph.links.filter((e) => ids.has(e.source) && ids.has(e.target)).map((e, i) => ({
+        id: i,
+        from: e.source,
+        to: e.target,
+        title: [e.relation, e.confidence, e.source_file].filter(Boolean).join(" · "),
+        color: { color: e.confidence === "EXTRACTED" ? "#484f58" : "#6e7681", opacity: 0.35 },
+        width: Math.max(0.5, (e.weight || 0.5) * 0.8),
+        arrows: graph.directed ? "to" : undefined
+      }));
+
+      return { nodes: visNodes, edges: visEdges };
+    }
+
+    function populateFilters(graph) {
+      const commSel = document.getElementById("communityFilter");
+      const fileSel = document.getElementById("fileFilter");
+      const communities = [...new Set(graph.nodes.map((n) => n.community).filter((c) => c != null))].sort((a, b) => a - b);
+      const files = [...new Set(graph.nodes.map((n) => n.source_file).filter(Boolean))].sort();
+      commSel.innerHTML = '<option value="">All communities</option>' +
+        communities.map((c) => `<option value="${c}">Community ${c}</option>`).join("");
+      fileSel.innerHTML = '<option value="">All files</option>' +
+        files.map((f) => `<option value="${f}">${f}</option>`).join("");
+    }
+
+    function showNode(nodeId) {
+      const n = rawGraph.nodes.find((x) => x.id === nodeId);
+      if (!n) return;
+      hintEl.hidden = true;
+      detailsEl.hidden = false;
+      const rows = [
+        ["Label", n.label],
+        ["ID", n.id],
+        ["File", n.source_file],
+        ["Location", n.source_location],
+        ["Type", n.file_type],
+        ["Community", n.community]
+      ];
+      detailsEl.innerHTML = rows
+        .filter(([, v]) => v != null && v !== "")
+        .map(([k, v]) => `<dt>${k}</dt><dd>${String(v).replace(/</g, "&lt;")}</dd>`)
+        .join("");
+    }
+
+    function renderGraph() {
+      if (!rawGraph) return;
+      const filters = {
+        q: document.getElementById("search").value,
+        community: document.getElementById("communityFilter").value,
+        file: document.getElementById("fileFilter").value
+      };
+      const data = buildVisData(rawGraph, filters);
+      statusEl.textContent = `${data.nodes.length} nodes · ${data.edges.length} edges`;
+      const container = document.getElementById("graph");
+      if (network) network.destroy();
+      network = new vis.Network(container, data, {
+        physics: {
+          stabilization: { iterations: 120 },
+          barnesHut: { gravitationalConstant: -8000, springLength: 120 }
+        },
+        interaction: { hover: true, tooltipDelay: 120 },
+        edges: { smooth: { type: "dynamic" } }
+      });
+      network.on("click", (p) => { if (p.nodes.length) showNode(p.nodes[0]); });
+    }
+
+    function ingestGraph(graph) {
+      rawGraph = graph;
+      fileWarn.hidden = true;
+      populateFilters(graph);
+      renderGraph();
+      statusEl.textContent = `${graph.nodes.length} nodes · ${graph.links.length} edges (full graph)`;
+    }
+
+    async function loadFromUrl() {
+      try {
+        const res = await fetch("./graph.json", { cache: "no-store" });
+        if (!res.ok) throw new Error(res.statusText);
+        ingestGraph(await res.json());
+      } catch (err) {
+        fileWarn.hidden = false;
+        statusEl.textContent = "Load graph.json via local server or file picker.";
+        console.error(err);
+      }
+    }
+
+    document.getElementById("filePicker").addEventListener("change", (ev) => {
+      const file = ev.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try { ingestGraph(JSON.parse(reader.result)); }
+        catch (e) { alert("Invalid JSON: " + e.message); }
+      };
+      reader.readAsText(file);
+    });
+
+    ["search", "communityFilter", "fileFilter"].forEach((id) => {
+      document.getElementById(id).addEventListener("input", renderGraph);
+      document.getElementById(id).addEventListener("change", renderGraph);
+    });
+    document.getElementById("fitBtn").addEventListener("click", () => network && network.fit());
+    document.getElementById("reloadBtn").addEventListener("click", loadFromUrl);
+
+    loadFromUrl();
+  </script>
+</body>
+</html>

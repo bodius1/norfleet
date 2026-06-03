@@ -6,9 +6,14 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "seed:demo": "node scripts/seedDemo.js",
+    "validate": "node scripts/validate.js",
+    "phase0:gate": "node scripts/phase0-gate.js",
+    "test:stability": "node scripts/test-stability.js"
   },
   "dependencies": {
+    "better-sqlite3": "^11.7.0",
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "openai": "^4.71.1"

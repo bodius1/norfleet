@@ -16,15 +16,36 @@ const {
 } = require("./config/settings");
 const runtimeStore = require("./state/runtimeStore");
 const {
+  createPlatform,
+  cacheKey,
+  getCachedInstruction,
+  setCachedInstruction
+} = require("./services/norfleetPlatform");
+const {
   validateAnalyzeKpisInput,
   validateTechnicianReportInput,
   validateRecommendUpdatesInput,
   validateRootCauseInput,
-  validateFeedbackInput
+  validateFeedbackInput,
+  validateReplayInput,
+  validateDispatchFeedbackInput,
+  validateWorkOrderStatusInput,
+  validateWorkOrderResolveInput
 } = require("./validation");
+const { buildTechnicianDispatchReport } = require("./services/technicianDispatchReport");
+const { createDispatchWorkflow } = require("./services/dispatchWorkflow");
+const { createWorkOrderService } = require("./services/workOrders");
+const { createDispatchRegistry } = require("./services/dispatchRegistry");
+const { predictWithMlService, submitFeedbackForRetrain, DEFAULT_ML_URL } = require("./services/mlPredictClient");
 
 const app = express();
 const PORT = config.env.PORT;
+const ML_SERVICE_URL = process.env.ML_SERVICE_URL || DEFAULT_ML_URL;
+/** Robot failure predictions: ML service first, JS predictor/failurePredictor.js fallback. */
+const platform = createPlatform({
+  mlPredictClient: { predictWithMlService },
+  mlOptions: { baseUrl: ML_SERVICE_URL }
+});
 
 app.use(cors());
 app.use(express.json());
@@ -42,14 +63,108 @@ app.use(
 app.use("/api/settings", requireAdminIfConfigured);
 app.use("/api/tools", requireAdminIfConfigured);
 
-runtimeStore.setActiveAgentsRuntime(createAgentDefinitions());
+runtimeStore.init(platform.repo);
 
-const runtimeTools = createRuntimeTools({
-  robots: runtimeStore.getRobots(),
-  fleets: runtimeStore.getFleets(),
-  fleetHistory: runtimeStore.getFleetHistoryRef(),
-  ticketStore: runtimeStore.getTechnicianTickets(),
-  feedbackStore: runtimeStore.getTechnicianFeedbackHistory()
+const dispatchWorkflow = createDispatchWorkflow(platform.repo);
+const dispatchRegistry = createDispatchRegistry(platform.repo);
+
+const DISPATCH_REPORT_TIMEOUT_MS = 5000;
+
+function emptyTimedOutDispatchReport(message = "Dispatch report timed out after 5 seconds.") {
+  return {
+    reportId: `TDR-timeout-${Date.now()}`,
+    generatedAt: new Date().toISOString(),
+    dispatches: [],
+    adminUpdates: [],
+    feedbackQueue: [],
+    timedOut: true,
+    emptyState: message,
+    summary: {
+      criticalCount: 0,
+      highCount: 0,
+      mediumCount: 0,
+      lowCount: 0,
+      technicianDispatchCount: 0,
+      automationUpdateCount: 0,
+      approvalRequiredCount: 0,
+      estimatedDowntimeRiskHours: 0
+    },
+    modelInfo: {
+      provider: "unknown",
+      model: "norfleet-predictor"
+    }
+  };
+}
+
+async function buildLiveDispatchReport() {
+  await platform.runAllPredictions().catch(() => {});
+  const predictions = platform.getAllLatestPredictions();
+  const robots = runtimeStore.getRobots();
+  const agents = platform.getAgentRuntimeConfig();
+  const auth = resolveProviderAuth();
+  const fleetId = runtimeStore.getFleets()[0]?.id || "fleet-default";
+  const report = buildTechnicianDispatchReport({
+    predictions,
+    robots,
+    anomalies: platform.repo.getAnomalies(),
+    agents,
+    feedback: dispatchWorkflow.getFeedback(),
+    dispatchStates: dispatchWorkflow.getStates(),
+    modelInfo: {
+      provider: auth.provider,
+      model: auth.model,
+      persistenceBackend: platform.repo.backend,
+      calibration: platform.getCalibration()
+    },
+    fleetId,
+    siteId: "localhost-demo"
+  });
+  return dispatchRegistry.enrichReportDispatches(report, (robotId) => platform.getLatestPrediction(robotId));
+}
+
+async function buildLiveDispatchReportWithTimeout() {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(
+      () => resolve(emptyTimedOutDispatchReport()),
+      DISPATCH_REPORT_TIMEOUT_MS
+    );
+  });
+  try {
+    return await Promise.race([buildLiveDispatchReport(), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function resolveDispatchForWorkOrder(dispatchId) {
+  const persisted = dispatchRegistry.get(dispatchId);
+  if (persisted && dispatchRegistry.canCreateWorkOrder(persisted)) {
+    return dispatchRegistry.refreshPredictionFields(persisted, platform.getLatestPrediction(persisted.robot?.robotId));
+  }
+  return dispatchRegistry.resolveForWorkOrder(dispatchId, buildLiveDispatchReport);
+}
+
+const workOrderService = createWorkOrderService(platform.repo, {
+  getDispatchById: resolveDispatchForWorkOrder,
+  getLivePredictionForRobot: (robotId) => platform.getLatestPrediction(robotId),
+  markDispatchWorkOrderCreated: (dispatchId, payload) => {
+    dispatchWorkflow.markWorkOrderCreated(dispatchId, payload);
+    const dispatch = dispatchRegistry.get(dispatchId);
+    if (dispatch) {
+      dispatchRegistry.upsert({
+        ...dispatch,
+        workflow: {
+          ...dispatch.workflow,
+          status: "work_order_created",
+          workOrderId: payload.workOrderId,
+          lastUpdatedAt: new Date().toISOString()
+        }
+      });
+    }
+  },
+  recordDispatchFeedback: (dispatchId, payload) =>
+    dispatchWorkflow.recordFeedback(dispatchId, payload, (fb) => platform.recordFeedback(fb))
 });
 
 const modelToKpis = {
@@ -76,32 +191,16 @@ function baselineForKpi(kpi) {
   return randomBetween(1, 10);
 }
 
-/** Demo robots + fleet so the MVP shows KPI tags and live charts on first load */
-function seedExampleFleet() {
-  const demoRobots = [
-    { id: "R-001", name: "Induction Alpha", model: "Stretch", warehouseZone: "A", taskProfile: "Multi-SKU pick", status: "active" },
-    { id: "R-002", name: "Aisle Runner 12", model: "LocusBot", warehouseZone: "B", taskProfile: "Transport relay", status: "active" },
-    { id: "R-003", name: "Sort Cell 3", model: "Chuck", warehouseZone: "C", taskProfile: "Sortation", status: "idle" },
-    { id: "R-004", name: "Outbound Cart", model: "CartConnect", warehouseZone: "D", taskProfile: "Cart-to-station", status: "charging" }
-  ];
-  demoRobots.forEach((r) => runtimeStore.addRobot({ ...r }));
+platform.seedExampleFleet(baselineForKpi);
+platform.start();
 
-  const kpis = Array.from(
-    new Set(demoRobots.flatMap((r) => modelToKpis[r.model] || ["Throughput", "Uptime"]))
-  );
-  const demoFleet = {
-    id: "F-001",
-    name: "Example — Sort Center East Wing",
-    robotIds: demoRobots.map((r) => r.id),
-    kpis,
-    createdAt: new Date().toISOString(),
-    isExample: true
-  };
-  runtimeStore.addFleet(demoFleet);
-  runtimeStore.ensureHistory(demoFleet.id, demoFleet.kpis, baselineForKpi);
-}
-
-seedExampleFleet();
+const runtimeTools = createRuntimeTools({
+  robots: runtimeStore.getRobots(),
+  fleets: runtimeStore.getFleets(),
+  fleetHistory: runtimeStore.getFleetHistoryRef(),
+  ticketStore: runtimeStore.getTechnicianTickets(),
+  feedbackStore: runtimeStore.getTechnicianFeedbackHistory()
+});
 
 function normalizeSeverity(v) {
   const s = String(v || "").toLowerCase();
@@ -292,9 +391,190 @@ app.post("/api/settings/clear-keys", (_req, res) => {
 app.get("/api/ai/runtime", (_req, res) => {
   const calls = runtimeStore.getAiSessionCalls();
   return res.json({
-    agents: runtimeStore.getActiveAgentsRuntime(),
+    agents: platform.getAgentRuntimeConfig(),
+    agentBuilderConfig: platform.getAgentRuntimeConfig(),
     sessionCalls: calls.length,
-    lastCall: calls[calls.length - 1] || null
+    lastCall: calls[calls.length - 1] || null,
+    calibration: platform.getCalibration(),
+    persistenceBackend: platform.repo.backend
+  });
+});
+
+app.get("/api/agents/runtime", (_req, res) => {
+  return res.json({ agents: platform.getAgentRuntimeConfig(), calibration: platform.getCalibration() });
+});
+
+app.put("/api/agents/runtime", (req, res) => {
+  const body = req.body || {};
+  if (body.agentBuilderConfig || body.agents) {
+    platform.setAgentRuntimeConfig(body.agentBuilderConfig || body.agents);
+  }
+  return res.json({ ok: true, agents: platform.getAgentRuntimeConfig() });
+});
+
+app.get("/api/technician/dispatch-report", async (_req, res) => {
+  try {
+    res.json(await buildLiveDispatchReportWithTimeout());
+  } catch (err) {
+    res.json(
+      emptyTimedOutDispatchReport(err?.message || "Dispatch report failed.")
+    );
+  }
+});
+
+function dispatchBody(req) {
+  return { ...(req.body || {}), technicianId: req.body?.technicianId || "technician" };
+}
+
+app.post("/api/dispatch/:dispatchId/acknowledge", (req, res) => {
+  const state = dispatchWorkflow.acknowledge(req.params.dispatchId, dispatchBody(req));
+  res.json({ ok: true, workflow: state });
+});
+
+app.post("/api/dispatch/:dispatchId/defer", (req, res) => {
+  const state = dispatchWorkflow.defer(req.params.dispatchId, dispatchBody(req));
+  res.json({ ok: true, workflow: state });
+});
+
+app.post("/api/dispatch/:dispatchId/resolve", (req, res) => {
+  const state = dispatchWorkflow.resolve(req.params.dispatchId, dispatchBody(req));
+  res.json({ ok: true, workflow: state });
+});
+
+app.post("/api/dispatch/:dispatchId/false-alarm", (req, res) => {
+  const state = dispatchWorkflow.falseAlarm(req.params.dispatchId, dispatchBody(req));
+  res.json({ ok: true, workflow: state });
+});
+
+app.post("/api/dispatch/:dispatchId/feedback", (req, res) => {
+  const valid = validateDispatchFeedbackInput(req.body || {});
+  if (!valid.ok) return res.status(400).json({ error: valid.error });
+  try {
+    const record = dispatchWorkflow.recordFeedback(
+      req.params.dispatchId,
+      { ...req.body, dispatchId: req.params.dispatchId },
+      (payload) => platform.recordFeedback(payload)
+    );
+    return res.json({ ok: true, feedback: record, calibration: platform.getCalibration() });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/dispatch/:dispatchId/work-order", async (req, res) => {
+  try {
+    const result = await workOrderService.createWorkOrderFromDispatch(req.params.dispatchId, {
+      ...dispatchBody(req),
+      force: Boolean(req.body?.force)
+    });
+    if (result.reusedExisting) {
+      return res.json({ ok: true, reusedExisting: true, workOrder: result.workOrder });
+    }
+    return res.status(201).json({ ok: true, workOrder: result.workOrder });
+  } catch (err) {
+    const status = String(err.message || "").includes("not found") ? 404 : 400;
+    return res.status(status).json({ error: err.message });
+  }
+});
+
+app.get("/api/work-orders", (req, res) => {
+  const workOrders = workOrderService.listWorkOrders({
+    status: req.query.status,
+    robotId: req.query.robotId,
+    dispatchId: req.query.dispatchId
+  });
+  res.json({ workOrders });
+});
+
+app.get("/api/work-orders/:workOrderId", (req, res) => {
+  const workOrder = workOrderService.getWorkOrder(req.params.workOrderId);
+  if (!workOrder) return res.status(404).json({ error: "work order not found" });
+  return res.json({ workOrder });
+});
+
+app.post("/api/work-orders/:workOrderId/status", (req, res) => {
+  const valid = validateWorkOrderStatusInput(req.body || {});
+  if (!valid.ok) return res.status(400).json({ error: valid.error });
+  try {
+    const workOrder = workOrderService.updateWorkOrderStatus(req.params.workOrderId, {
+      ...req.body,
+      assignedTechnicianId: req.body?.assignedTechnicianId || req.body?.technicianId
+    });
+    return res.json({ ok: true, workOrder });
+  } catch (err) {
+    const status = String(err.message || "").includes("not found") ? 404 : 400;
+    return res.status(status).json({ error: err.message });
+  }
+});
+
+app.post("/api/work-orders/:workOrderId/resolve", (req, res) => {
+  const valid = validateWorkOrderResolveInput(req.body || {});
+  if (!valid.ok) return res.status(400).json({ error: valid.error });
+  try {
+    const result = workOrderService.resolveWorkOrder(req.params.workOrderId, {
+      ...req.body,
+      technicianId: req.body?.technicianId || "technician"
+    });
+    return res.json({
+      ok: true,
+      workOrder: result.workOrder,
+      afterSnapshot: result.afterSnapshot,
+      outcomeAssessment: result.outcomeAssessment,
+      feedback: result.feedback,
+      calibration: platform.getCalibration()
+    });
+  } catch (err) {
+    const status = String(err.message || "").includes("not found") ? 404 : 400;
+    return res.status(status).json({ error: err.message });
+  }
+});
+
+app.get("/api/predictions", async (_req, res) => {
+  await platform.runAllPredictions().catch(() => {});
+  const preds = platform
+    .getAllLatestPredictions()
+    .sort((a, b) => (a.estimatedTimeToFailureHours ?? 999) - (b.estimatedTimeToFailureHours ?? 999));
+  res.json({ predictions: preds, calibration: platform.getCalibration() });
+});
+
+app.get("/api/robots/:id/health", async (req, res) => {
+  const payload = await platform.getRobotHealthPayload(req.params.id);
+  if (!payload) return res.status(404).json({ error: "robot not found or insufficient telemetry" });
+  res.json(payload);
+});
+
+app.get("/api/debug/r002-pipeline", (_req, res) => {
+  res.json(platform.getDebugPipeline("R-002"));
+});
+
+app.post("/api/telemetry/ingest", async (req, res) => {
+  const reading = req.body || {};
+  if (!reading.robotId || !reading.signals) {
+    return res.status(400).json({ error: "robotId and signals required" });
+  }
+  reading.ts = reading.ts || Date.now();
+  platform.timeSeries.write(reading);
+  await platform.runPredictionForRobot(reading.robotId, reading.ts);
+  res.json({ ok: true });
+});
+
+app.post("/api/sim/replay", async (req, res) => {
+  const valid = validateReplayInput(req.body || {});
+  if (!valid.ok) return res.status(400).json({ error: valid.error });
+  const speed = Number(req.body.speed) || 60;
+  platform.setReplaySpeed(speed);
+  const tickCount = Math.min(240, speed * 2);
+  for (let i = 0; i < tickCount; i += 1) {
+    platform.simulator.tick().forEach((r) => {
+      platform.timeSeries.write(r);
+    });
+  }
+  await platform.runAllPredictions().catch(() => {});
+  res.json({
+    ok: true,
+    speed: platform.adapter.getReplaySpeed?.() || speed,
+    simTimeMs: platform.simulator.getSimTimeMs(),
+    ticksAdvanced: tickCount
   });
 });
 
@@ -362,41 +642,65 @@ app.post("/api/ai/generate-technician-report", async (req, res) => {
   const payload = req.body || {};
   const valid = validateTechnicianReportInput(payload);
   if (!valid.ok) return res.status(400).json({ error: valid.error });
-  const fallback = fallbackTechnicianReport(payload);
+
+  const openPreds = platform.getAllLatestPredictions().filter((p) => p.alert);
+  const dispatchActions = openPreds.map((p) => platform.buildDeterministicDispatch(p));
+  const fallback = {
+    reportSummary: {
+      totalAnomalies: openPreds.length,
+      recommendedActions: dispatchActions.length,
+      autoFixEligible: dispatchActions.filter((a) => a.selfFix).length,
+      technicianApprovalRequired: dispatchActions.length,
+      estimatedDowntimeAvoided: `${Math.max(6, dispatchActions.length * 6)}h`
+    },
+    actions: dispatchActions.map((a) => ({
+      id: a.id,
+      title: a.title,
+      source: a.source,
+      severity: a.severity,
+      affectedRobots: [a.robotId],
+      actionType: "Predictive dispatch",
+      explanation: a.detail,
+      buttonLabel: a.buttonLabel,
+      autoFixEligible: a.selfFix,
+      requiresHumanApproval: true,
+      predictionId: a.predictionId,
+      failureMode: a.failureMode,
+      estimatedTimeToFailureHours: a.estimatedTimeToFailureHours,
+      confidence: a.confidence
+    })),
+    predictions: openPreds
+  };
+
+  const ck = cacheKey({ preds: openPreds.map((p) => p.id) });
+  const cached = getCachedInstruction(ck);
+  if (cached) {
+    return res.json({ ...cached, metadata: { cached: true }, predictions: openPreds });
+  }
+
   const auth = resolveProviderAuth();
-  const out = await generateJson({
-    provider: auth.provider,
-    model: auth.model,
-    apiKey: auth.apiKey,
-    role: "Norfleet Technician Report Generator",
-    task: "Generate AI-generated maintenance actions from anomalies and workflow context.",
-    data: {
-      anomalies: payload.anomalies || [],
-      activeAgents: payload.activeAgents || [],
-      robotLogs: payload.robotLogs || [],
-      technicianNotes: payload.technicianNotes || runtimeStore.getTechnicianFeedbackHistory(),
-      currentWorkflow: payload.currentWorkflow || {}
-    },
-    constraints: [
-      "Valid JSON only.",
-      "Include source, severity, action type, and approval flags.",
-      "Prefer safe, reviewable actions."
-    ],
-    outputSchema: {
-      reportSummary: {
-        totalAnomalies: "number",
-        recommendedActions: "number",
-        autoFixEligible: "number",
-        technicianApprovalRequired: "number",
-        estimatedDowntimeAvoided: "string"
-      },
-      actions: ["object"]
-    },
-    examples: [fallback],
-    schemaFallback: fallback
-  });
-  runtimeStore.pushAiSessionCall({ endpoint: "generate-technician-report", ...out.meta, status: "ok", timestamp: new Date().toISOString() });
-  return res.json({ ...out.data, metadata: out.meta });
+  let narrative = null;
+  if (auth.provider !== "mock" && dispatchActions.length) {
+    const out = await generateJson({
+      provider: auth.provider,
+      model: auth.model,
+      apiKey: auth.apiKey,
+      role: "Norfleet repair instruction writer",
+      task: "Turn deterministic dispatch actions into human-readable repair steps. JSON {instructions: string[]}",
+      data: { actions: dispatchActions },
+      constraints: ["Valid JSON only", "Do not change dispatch decisions"],
+      outputSchema: { instructions: ["string"] },
+      examples: [{ instructions: ["Inspect bearing housing on R-002", "Schedule 30-min vibration baseline recheck"] }],
+      schemaFallback: { instructions: dispatchActions.map((a) => a.detail) }
+    });
+    runtimeStore.pushAiSessionCall({ endpoint: "generate-technician-report", ...out.meta, status: "ok", timestamp: new Date().toISOString() });
+    narrative = out.data;
+  }
+
+  const response = { ...fallback, narrative, metadata: { provider: auth.provider, deterministic: true } };
+  setCachedInstruction(ck, response);
+  platform.repo.addTechnicianReport({ id: `TR-${Date.now()}`, ...response, createdAt: new Date().toISOString() });
+  return res.json(response);
 });
 
 app.post("/api/ai/recommend-agent-updates", async (req, res) => {
@@ -472,24 +776,38 @@ app.post("/api/ai/root-cause", async (req, res) => {
   return res.json({ ...out.data, metadata: out.meta });
 });
 
-app.post("/api/ai/feedback", (req, res) => {
+app.post("/api/ai/feedback", async (req, res) => {
   const payload = req.body || {};
   const valid = validateFeedbackInput(payload);
   if (!valid.ok) return res.status(400).json({ error: valid.error });
+
+  const outcome = payload.outcome || (payload.fixWorked ? "confirmed-failure" : "false-alarm");
+  platform.recordFeedback({
+    actionId: payload.actionId,
+    predictionId: payload.predictionId,
+    failureMode: payload.failureMode,
+    outcome,
+    technicianFeedback: payload.technicianFeedback || "",
+    fixWorked: Boolean(payload.fixWorked)
+  });
+
+  submitFeedbackForRetrain(platform, { ...payload, outcome }, { baseUrl: ML_SERVICE_URL }).catch(() => {});
+
   const saved = runtimeTools.saveTechnicianFeedback({
     actionId: payload.actionId,
     technicianFeedback: payload.technicianFeedback || "",
     fixWorked: Boolean(payload.fixWorked),
     beforeAfter: payload.beforeAfterKpiValues || {}
   });
+
   return res.json({
-    learningUpdate: payload.fixWorked
-      ? "Feedback indicates fix success; future recommendations will prioritize this action pattern."
-      : "Feedback indicates limited efficacy; future recommendations will de-prioritize this action unless confidence increases.",
-    futureRecommendationChange: payload.fixWorked
-      ? "Increase confidence for similar action types by +0.04."
-      : "Require additional evidence before proposing this action.",
-    memorySaved: saved.saved
+    learningUpdate:
+      outcome === "false-alarm"
+        ? "False alarm recorded; calibration tightened to reduce repeat alerts."
+        : "Outcome recorded; calibration updated for this failure mode.",
+    futureRecommendationChange: `Calibration: ${JSON.stringify(platform.getCalibration())}`,
+    memorySaved: saved.saved,
+    calibration: platform.getCalibration()
   });
 });
 
@@ -585,7 +903,8 @@ app.get("/api/stream", (req, res) => {
       fleetId: fleet.id,
       summary: summarizeFleet(fleet),
       kpis: fleet.kpis,
-      series: runtimeStore.getFleetHistory(fleet.id)
+      series: runtimeStore.getFleetHistory(fleet.id),
+      predictions: platform.getAllLatestPredictions().filter((p) => fleet.robotIds.includes(p.robotId))
     };
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
   };
@@ -597,4 +916,5 @@ app.get("/api/stream", (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Norfleet MVP running at http://localhost:${PORT}`);
+  console.log(`Persistence backend: ${platform.repo.backend}`);
 });

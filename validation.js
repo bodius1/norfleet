@@ -32,7 +32,55 @@ function validateRootCauseInput(body) {
 function validateFeedbackInput(body) {
   const b = body || {};
   if (!b.actionId) return { ok: false, error: "actionId is required" };
-  if (typeof b.fixWorked !== "boolean") return { ok: false, error: "fixWorked must be boolean" };
+  const outcomes = ["confirmed-failure", "false-alarm", "fixed-early"];
+  if (b.outcome !== undefined && !outcomes.includes(b.outcome)) {
+    return { ok: false, error: "outcome must be confirmed-failure, false-alarm, or fixed-early" };
+  }
+  if (b.fixWorked !== undefined && typeof b.fixWorked !== "boolean") {
+    return { ok: false, error: "fixWorked must be boolean" };
+  }
+  return { ok: true };
+}
+
+function validateReplayInput(body) {
+  const b = body || {};
+  const speed = Number(b.speed);
+  if (b.speed !== undefined && (!Number.isFinite(speed) || speed < 1 || speed > 360)) {
+    return { ok: false, error: "speed must be between 1 and 360" };
+  }
+  return { ok: true };
+}
+
+function validateDispatchFeedbackInput(body) {
+  const b = body || {};
+  const outcomes = ["confirmed_failure", "fixed_early", "false_alarm", "not_enough_evidence"];
+  if (!b.outcome || !outcomes.includes(b.outcome)) {
+    return { ok: false, error: `outcome must be one of: ${outcomes.join(", ")}` };
+  }
+  if (b.repairMinutes !== undefined && !Number.isFinite(Number(b.repairMinutes))) {
+    return { ok: false, error: "repairMinutes must be a number" };
+  }
+  return { ok: true };
+}
+
+function validateWorkOrderStatusInput(body) {
+  const b = body || {};
+  const statuses = ["open", "assigned", "in_progress", "on_hold", "resolved", "false_alarm", "cancelled"];
+  if (!b.status || !statuses.includes(b.status)) {
+    return { ok: false, error: `status must be one of: ${statuses.join(", ")}` };
+  }
+  return { ok: true };
+}
+
+function validateWorkOrderResolveInput(body) {
+  const b = body || {};
+  const outcomes = ["confirmed_failure", "fixed_early", "false_alarm", "not_enough_evidence"];
+  if (b.outcome !== undefined && !outcomes.includes(b.outcome)) {
+    return { ok: false, error: `outcome must be one of: ${outcomes.join(", ")}` };
+  }
+  if (b.repairMinutes !== undefined && !Number.isFinite(Number(b.repairMinutes))) {
+    return { ok: false, error: "repairMinutes must be a number" };
+  }
   return { ok: true };
 }
 
@@ -41,5 +89,9 @@ module.exports = {
   validateTechnicianReportInput,
   validateRecommendUpdatesInput,
   validateRootCauseInput,
-  validateFeedbackInput
+  validateFeedbackInput,
+  validateReplayInput,
+  validateDispatchFeedbackInput,
+  validateWorkOrderStatusInput,
+  validateWorkOrderResolveInput
 };

@@ -137,8 +137,8 @@ function createWorkOrderService(repo, options = {}) {
     return rows.map((w) => sanitizeForJson({ ...w }));
   }
 
-  function createWorkOrderFromDispatch(dispatchId, payload = {}) {
-    const dispatch = getDispatchById?.(dispatchId);
+  async function createWorkOrderFromDispatch(dispatchId, payload = {}) {
+    const dispatch = await Promise.resolve(getDispatchById?.(dispatchId));
     if (!dispatch) {
       throw new Error(`Dispatch not found or not actionable: ${dispatchId}`);
     }

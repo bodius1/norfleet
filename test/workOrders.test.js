@@ -92,7 +92,9 @@ function isolatedCtx() {
       if (persisted && registry.canCreateWorkOrder(persisted)) {
         return registry.refreshPredictionFields(persisted, livePrediction);
       }
-      return registry.resolveForWorkOrder(dispatchId, buildFreshReport);
+      const report = buildFreshReport();
+      const fresh = (report.dispatches || []).find((d) => d.dispatchId === dispatchId);
+      return fresh ? registry.upsert(fresh) : null;
     },
     getLivePredictionForRobot: () => livePrediction,
     markDispatchWorkOrderCreated: (dispatchId, payload) => {
@@ -143,14 +145,14 @@ describe("work orders", () => {
     ctx = null;
   });
 
-  it("work order can be created from dispatch ID returned by report", () => {
+  it("work order can be created from dispatch ID returned by report", async () => {
     const report = ctx.buildFreshReport();
     assert.equal(report.dispatches.length, 1);
     const dispatchId = report.dispatches[0].dispatchId;
     assert.equal(dispatchId, STABLE_DISPATCH_ID);
     assert.ok(!dispatchId.includes("P-"));
 
-    const created = ctx.workOrders.createWorkOrderFromDispatch(dispatchId, { technicianId: "tech-1" });
+    const created = await ctx.workOrders.createWorkOrderFromDispatch(dispatchId, { technicianId: "tech-1" });
     assert.equal(created.reusedExisting, false);
     assert.ok(created.workOrder.workOrderId.startsWith("WO-"));
     assert.equal(created.workOrder.dispatchId, STABLE_DISPATCH_ID);
@@ -167,19 +169,19 @@ describe("work orders", () => {
     assert.notEqual(report1.dispatches[0].prediction.predictionId, report2.dispatches[0].prediction.predictionId);
   });
 
-  it("work-order creation succeeds after report regeneration", () => {
+  it("work-order creation succeeds after report regeneration", async () => {
     const report = ctx.buildFreshReport();
     const dispatchId = report.dispatches[0].dispatchId;
     ctx.setPredictionId("P-55");
     ctx.setLivePrediction(samplePrediction({ id: "P-55", estimatedTimeToFailureHours: 0.01 }));
-    const created = ctx.workOrders.createWorkOrderFromDispatch(dispatchId);
+    const created = await ctx.workOrders.createWorkOrderFromDispatch(dispatchId);
     assert.equal(created.reusedExisting, false);
     assert.equal(created.workOrder.dispatchId, STABLE_DISPATCH_ID);
   });
 
-  it("creates work order from dispatch with beforeSnapshot", () => {
+  it("creates work order from dispatch with beforeSnapshot", async () => {
     const report = ctx.buildFreshReport();
-    const { workOrder, reusedExisting } = ctx.workOrders.createWorkOrderFromDispatch(report.dispatches[0].dispatchId, {
+    const { workOrder, reusedExisting } = await ctx.workOrders.createWorkOrderFromDispatch(report.dispatches[0].dispatchId, {
       technicianId: "tech-1"
     });
     assert.equal(reusedExisting, false);
@@ -188,22 +190,22 @@ describe("work orders", () => {
     assert.equal(workOrder.beforeSnapshot.estimatedTimeToFailureHours, 5.2);
   });
 
-  it("duplicate POST returns existing work order with reusedExisting true", () => {
+  it("duplicate POST returns existing work order with reusedExisting true", async () => {
     const report = ctx.buildFreshReport();
     const dispatchId = report.dispatches[0].dispatchId;
-    const first = ctx.workOrders.createWorkOrderFromDispatch(dispatchId);
+    const first = await ctx.workOrders.createWorkOrderFromDispatch(dispatchId);
     ctx.setPredictionId("P-77");
-    const second = ctx.workOrders.createWorkOrderFromDispatch(dispatchId);
+    const second = await ctx.workOrders.createWorkOrderFromDispatch(dispatchId);
     assert.equal(first.reusedExisting, false);
     assert.equal(second.reusedExisting, true);
     assert.equal(second.workOrder.workOrderId, first.workOrder.workOrderId);
     assert.equal(ctx.workOrders.listWorkOrders().length, 1);
   });
 
-  it("marks dispatch status work_order_created and persists workflow.workOrderId in report", () => {
+  it("marks dispatch status work_order_created and persists workflow.workOrderId in report", async () => {
     const report = ctx.buildFreshReport();
     const dispatchId = report.dispatches[0].dispatchId;
-    const { workOrder } = ctx.workOrders.createWorkOrderFromDispatch(dispatchId);
+    const { workOrder } = await ctx.workOrders.createWorkOrderFromDispatch(dispatchId);
     const state = ctx.dispatchWorkflow.getStates()[dispatchId];
     assert.equal(state.status, "work_order_created");
     assert.equal(state.workOrderId, workOrder.workOrderId);
@@ -214,17 +216,17 @@ describe("work orders", () => {
     assert.equal(dispatch.workflow.workOrderId, workOrder.workOrderId);
   });
 
-  it("persists work orders across repository reload", () => {
+  it("persists work orders across repository reload", async () => {
     const report = ctx.buildFreshReport();
-    ctx.workOrders.createWorkOrderFromDispatch(report.dispatches[0].dispatchId);
+    await ctx.workOrders.createWorkOrderFromDispatch(report.dispatches[0].dispatchId);
     const reloaded = createJsonRepository({ jsonPath: ctx.jsonPath });
     assert.equal(reloaded.getWorkOrders().length, 1);
     assert.equal(Object.keys(reloaded.getActiveDispatches()).length, 1);
   });
 
-  it("updates status and writes audit trail", () => {
+  it("updates status and writes audit trail", async () => {
     const report = ctx.buildFreshReport();
-    const { workOrder } = ctx.workOrders.createWorkOrderFromDispatch(report.dispatches[0].dispatchId);
+    const { workOrder } = await ctx.workOrders.createWorkOrderFromDispatch(report.dispatches[0].dispatchId);
     const updated = ctx.workOrders.updateWorkOrderStatus(workOrder.workOrderId, {
       status: "in_progress",
       assignedTechnicianId: "tech-42"
@@ -233,9 +235,9 @@ describe("work orders", () => {
     assert.ok(ctx.repo.getWorkOrderAudit().length >= 2);
   });
 
-  it("resolve stores afterSnapshot and monitoring note when telemetry unchanged", () => {
+  it("resolve stores afterSnapshot and monitoring note when telemetry unchanged", async () => {
     const report = ctx.buildFreshReport();
-    const { workOrder } = ctx.workOrders.createWorkOrderFromDispatch(report.dispatches[0].dispatchId);
+    const { workOrder } = await ctx.workOrders.createWorkOrderFromDispatch(report.dispatches[0].dispatchId);
     const result = ctx.workOrders.resolveWorkOrder(workOrder.workOrderId, {
       outcome: "confirmed_failure",
       actionTaken: "Replaced bearing",
@@ -246,9 +248,9 @@ describe("work orders", () => {
     assert.equal(jsonHasBadValues(result.workOrder), false);
   });
 
-  it("false_alarm resolve routes through feedback and calibration path", () => {
+  it("false_alarm resolve routes through feedback and calibration path", async () => {
     const report = ctx.buildFreshReport();
-    const { workOrder } = ctx.workOrders.createWorkOrderFromDispatch(report.dispatches[0].dispatchId);
+    const { workOrder } = await ctx.workOrders.createWorkOrderFromDispatch(report.dispatches[0].dispatchId);
     const beforeCal = ctx.getCal().bearing_wear.minProbability;
     ctx.workOrders.resolveWorkOrder(workOrder.workOrderId, { outcome: "false_alarm", notes: "No wear found" });
     assert.ok(ctx.getCal().bearing_wear.minProbability > beforeCal);
@@ -293,7 +295,7 @@ describe("work orders", () => {
     assert.equal(assessment.monitoringStillNeeded, true);
   });
 
-  it("rejects work order creation for missing dispatch", () => {
-    assert.throws(() => ctx.workOrders.createWorkOrderFromDispatch("disp-missing"), /not found/i);
+  it("rejects work order creation for missing dispatch", async () => {
+    await assert.rejects(() => ctx.workOrders.createWorkOrderFromDispatch("disp-missing"), /not found/i);
   });
 });

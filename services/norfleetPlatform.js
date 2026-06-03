@@ -46,7 +46,9 @@ let predictionCounter = 0;
 
 
 
-function createPlatform() {
+function createPlatform(options = {}) {
+  const mlPredictClient = options.mlPredictClient || null;
+  const mlOptions = options.mlOptions || {};
 
   const repo = createRepository();
 
@@ -240,7 +242,7 @@ function createPlatform() {
 
     runWarmupTicks(WARMUP_TICKS);
 
-    runAllPredictions();
+    runAllPredictions().catch(() => {});
 
     syncPredictionsToRepo();
 
@@ -260,7 +262,7 @@ function createPlatform() {
 
     runWarmupTicks(WARMUP_TICKS);
 
-    runAllPredictions();
+    runAllPredictions().catch(() => {});
 
     syncPredictionsToRepo();
 
@@ -348,7 +350,7 @@ function createPlatform() {
 
 
 
-  function runPredictionForRobot(robotId, nowTs = simulator.getSimTimeMs()) {
+  async function runPredictionForRobot(robotId, nowTs = simulator.getSimTimeMs()) {
 
     const computed = computeRobotFeatures(robotId, nowTs);
 
@@ -356,7 +358,19 @@ function createPlatform() {
 
     const { robot, features } = computed;
 
-    const result = predict(features, calibration);
+    let result = null;
+
+    if (mlPredictClient?.predictWithMlService) {
+
+      result = await mlPredictClient.predictWithMlService(computed, mlOptions);
+
+    }
+
+    if (!result) {
+
+      result = predict(features, calibration);
+
+    }
 
     result.id = result.id || `P-${++predictionCounter}`;
 
@@ -382,9 +396,9 @@ function createPlatform() {
 
 
 
-  function runAllPredictions(nowTs = simulator.getSimTimeMs()) {
+  async function runAllPredictions(nowTs = simulator.getSimTimeMs()) {
 
-    repo.getRobots().forEach((r) => runPredictionForRobot(r.id, nowTs));
+    await Promise.all(repo.getRobots().map((r) => runPredictionForRobot(r.id, nowTs)));
 
     syncPredictionsToRepo();
 
@@ -410,7 +424,7 @@ function createPlatform() {
 
 
 
-  function getRobotHealthPayload(robotId) {
+  async function getRobotHealthPayload(robotId) {
 
     const computed = computeRobotFeatures(robotId);
 
@@ -418,9 +432,25 @@ function createPlatform() {
 
     const { robot, features } = computed;
 
-    const rawPred = predict(features, calibration);
+    let rawPred = latestPredictions.get(robotId);
 
-    rawPred.robotName = robot.name;
+    if (!rawPred) {
+
+      if (mlPredictClient?.predictWithMlService) {
+
+        rawPred = await mlPredictClient.predictWithMlService(computed, mlOptions);
+
+      }
+
+      if (!rawPred) {
+
+        rawPred = predict(features, calibration);
+
+      }
+
+    }
+
+    rawPred = { ...rawPred, robotName: robot.name };
 
     const prediction = normalizePrediction(rawPred, robot.name);
 
@@ -534,9 +564,11 @@ function createPlatform() {
 
     if (predictionTimer) clearInterval(predictionTimer);
 
-    predictionTimer = setInterval(() => runAllPredictions(), PREDICTION_INTERVAL_MS);
+    predictionTimer = setInterval(() => {
+      runAllPredictions().catch(() => {});
+    }, PREDICTION_INTERVAL_MS);
 
-    runAllPredictions();
+    runAllPredictions().catch(() => {});
 
     logBootPredictionDiagnostics();
 

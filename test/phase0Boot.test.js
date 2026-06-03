@@ -36,13 +36,13 @@ describe("phase 0 boot health", () => {
     });
   });
 
-  it("R-002 health payload has finite TTF and normalized HI series", () => {
+  it("R-002 health payload has finite TTF and normalized HI series", async () => {
     const platform = createPlatform();
     platform.repo.clearAll();
     platform.seedExampleFleet(baselineForKpi);
     platform.seedDemoScenario();
 
-    const health = platform.getRobotHealthPayload("R-002");
+    const health = await platform.getRobotHealthPayload("R-002");
     assert.ok(health);
     assert.equal(health.prediction.insufficientData, false, health.prediction.reason);
     assert.ok(health.prediction.estimatedTimeToFailureHours != null);
@@ -54,13 +54,13 @@ describe("phase 0 boot health", () => {
     });
   });
 
-  it("start() repopulates telemetry after reset (server boot path)", () => {
+  it("start() repopulates telemetry after reset (server boot path)", async () => {
     bootPlatform = createPlatform();
     bootPlatform.repo.clearAll();
     bootPlatform.seedExampleFleet(baselineForKpi);
     bootPlatform.start();
 
-    const health = bootPlatform.getRobotHealthPayload("R-002");
+    const health = await bootPlatform.getRobotHealthPayload("R-002");
     assert.ok(health);
     assert.equal(health.prediction.insufficientData, false, health.prediction.reason);
     assert.ok(health.prediction.contributingSignals.length > 0);

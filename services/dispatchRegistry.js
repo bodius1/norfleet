@@ -164,13 +164,13 @@ function createDispatchRegistry(repo) {
     return report;
   }
 
-  function resolveForWorkOrder(dispatchId, buildFreshReport) {
+  async function resolveForWorkOrder(dispatchId, buildFreshReport) {
     const persisted = get(dispatchId);
     if (persisted && !isClosedDispatch(persisted)) {
       return persisted;
     }
 
-    const report = buildFreshReport();
+    const report = await buildFreshReport();
     const fresh = (report.dispatches || []).find((d) => d.dispatchId === dispatchId);
     if (fresh) {
       return upsert(fresh);

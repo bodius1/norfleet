@@ -51,18 +51,32 @@ function formatPercent(value) {
 
 function formatSignalName(name) {
   const labels = {
-    vibrationRms: "Vibration RMS",
+    vibrationRms: "Vibration",
+    bearingTempC: "Bearing temp",
     motorCurrentA: "Motor current",
-    bearingTempC: "Bearing temperature",
     batteryCapacityPct: "Battery capacity",
     batteryVoltage: "Battery voltage",
     cycleTimeMs: "Cycle time",
     trafficDelayMs: "Traffic delay",
     pickAccuracyPct: "Pick accuracy",
-    pickActuatorDriftMm: "Pick actuator drift",
+    pickActuatorDriftMm: "Pick drift",
+    travelTimeMs: "Travel time",
+    dockAlignmentMm: "Dock alignment",
     pickErrorRate: "Pick error rate"
   };
-  return labels[name] || safeText(name, "Signal").replace(/([A-Z])/g, " $1").replace(/^./, (c) => c.toUpperCase());
+  if (labels[name]) return labels[name];
+  let raw = String(name || "Signal")
+    .replace(/TempC$/, " temp")
+    .replace(/CurrentA$/, " current")
+    .replace(/Rms$/, "")
+    .replace(/Pct$/, "")
+    .replace(/Mm$/, "")
+    .replace(/Ms$/, "");
+  return raw
+    .replace(/([A-Z])/g, " $1")
+    .replace(/\s+/g, " ")
+    .replace(/^./, (c) => c.toUpperCase())
+    .trim();
 }
 
 function sanitizeForJson(value) {

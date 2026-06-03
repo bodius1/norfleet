@@ -1,276 +1,611 @@
-/** Technician Dispatch UI — Phase 1 dispatch-first surface (loaded after webapp.js). */
+/** Technician Dispatch UI — technician-first surface (loaded after webapp.js + DispatchUI helpers). */
+
+function resolveDispatchUiHelpers() {
+  return (
+    (typeof globalThis !== "undefined" && globalThis.DispatchUI) ||
+    (typeof DispatchUI !== "undefined" && DispatchUI) ||
+    null
+  );
+}
+
+function createSafeDispatchUiHelpers(base) {
+  const src = base && typeof base === "object" ? base : {};
+  const pick = (name, fallback) => (typeof src[name] === "function" ? src[name] : fallback);
+
+  return {
+    sanitizeDisplayValue: pick("sanitizeDisplayValue", (value, fallback = "Not available") => {
+      if (value === undefined || value === null) return fallback;
+      if (typeof value === "number" && !Number.isFinite(value)) return fallback;
+      const s = String(value).trim();
+      return s || fallback;
+    }),
+    getDispatchStatusLabel: pick("getDispatchStatusLabel", () => "New"),
+    getWorkOrderStatusLabel: pick("getWorkOrderStatusLabel", () => "Open"),
+    getDispatchPrimaryAction: pick("getDispatchPrimaryAction", () => ({ type: "none", label: "" })),
+    getActiveQueueCount: pick("getActiveQueueCount", () => 0),
+    getCriticalNowCount: pick("getCriticalNowCount", () => 0),
+    getOpenWorkOrdersCount: pick("getOpenWorkOrdersCount", () => 0),
+    formatTrustReason: pick("formatTrustReason", () => "Prediction details unavailable."),
+    buildEvidenceRows: pick("buildEvidenceRows", () => []),
+    buildSopRows: pick("buildSopRows", () => []),
+    buildSnapshotSummary: pick("buildSnapshotSummary", () => "Telemetry snapshot not available."),
+    shouldShowDemoTools: pick("shouldShowDemoTools", () => false),
+    getEmptyQueueCopy: pick(
+      "getEmptyQueueCopy",
+      () => "No actionable robot failures right now. Fleet is being monitored."
+    ),
+    mapResolveOutcomeForApi: pick("mapResolveOutcomeForApi", (uiOutcome) => uiOutcome || "not_enough_evidence"),
+    formatResolveOutcomeMessage: pick("formatResolveOutcomeMessage", () => "Outcome saved."),
+    indexWorkOrdersByDispatch: pick("indexWorkOrdersByDispatch", (workOrders) => {
+      if (!Array.isArray(workOrders)) return {};
+      return workOrders.reduce((acc, wo) => {
+        if (wo && wo.dispatchId) acc[wo.dispatchId] = wo;
+        return acc;
+      }, {});
+    }),
+    formatCompactTtf: pick("formatCompactTtf", () => "Not available"),
+    formatHumanDate: pick("formatHumanDate", () => "Not available"),
+    priorityChipClass: pick("priorityChipClass", () => "td-chip td-chip--medium"),
+    statusChipClass: pick("statusChipClass", () => "td-chip td-chip--neutral"),
+    failureModeLabel: pick("failureModeLabel", (mode) => String(mode || "unknown").replace(/_/g, " "))
+  };
+}
+
+const H = createSafeDispatchUiHelpers(resolveDispatchUiHelpers());
+
+function ensureDispatchUiState() {
+  if (!state.dispatchUi) {
+    state.dispatchUi = {
+      syncStatus: "idle",
+      lastRefresh: null,
+      cardMessages: {},
+      cardErrors: {},
+      resolveMessages: {},
+      resolveErrors: {},
+      expandedResolveId: null
+    };
+  }
+  if (!Array.isArray(state.workOrders)) state.workOrders = [];
+}
+
+const DISPATCH_REPORT_FETCH_MS = 5000;
+
+function emptyDispatchReport(options = {}) {
+  return {
+    dispatches: [],
+    adminUpdates: [],
+    feedbackQueue: [],
+    timedOut: Boolean(options.timedOut),
+    emptyState:
+      options.message ||
+      "Dispatch report unavailable. Fleet monitoring continues.",
+    summary: {
+      criticalCount: 0,
+      highCount: 0,
+      mediumCount: 0,
+      lowCount: 0,
+      technicianDispatchCount: 0,
+      automationUpdateCount: 0,
+      approvalRequiredCount: 0,
+      estimatedDowntimeRiskHours: 0
+    }
+  };
+}
+
+async function fetchDispatchReport() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DISPATCH_REPORT_FETCH_MS);
+  try {
+    const report = await api("/api/technician/dispatch-report", { signal: controller.signal });
+    if (report?.timedOut) {
+      return {
+        report: emptyDispatchReport({
+          timedOut: true,
+          message: report.emptyState || "Dispatch report timed out. Retry from Refresh."
+        }),
+        degraded: true
+      };
+    }
+    return { report, degraded: false };
+  } catch (err) {
+    const isTimeout =
+      err?.name === "AbortError" ||
+      String(err?.message || "")
+        .toLowerCase()
+        .includes("abort");
+    return {
+      report: emptyDispatchReport({
+        timedOut: isTimeout,
+        message: isTimeout
+          ? "Dispatch report timed out. Retry from Refresh."
+          : "Dispatch report unavailable."
+      }),
+      degraded: true
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function loadWorkOrders() {
+  ensureDispatchUiState();
+  const res = await api("/api/work-orders");
+  state.workOrders = Array.isArray(res.workOrders) ? res.workOrders : [];
+  return state.workOrders;
+}
 
 async function loadDispatchReport() {
-  const report = await api("/api/technician/dispatch-report");
+  ensureDispatchUiState();
+  state.dispatchUi.syncStatus = "syncing";
+  const { report, degraded } = await fetchDispatchReport();
   state.dispatchReport = report;
-  if (!state.selectedDispatchId && report.dispatches?.length) {
-    state.selectedDispatchId = report.dispatches[0].dispatchId;
-  }
+  state.dispatchUi.syncStatus = degraded ? "degraded" : "idle";
+  state.dispatchUi.lastRefresh = degraded ? state.dispatchUi.lastRefresh : new Date().toISOString();
+  loadWorkOrders().catch(() => {});
+  return report;
+}
+
+async function refreshTechnicianDispatch() {
+  ensureDispatchUiState();
+  state.dispatchUi.syncStatus = "syncing";
+  const { report, degraded } = await fetchDispatchReport();
+  state.dispatchReport = report;
+  await loadWorkOrders().catch(() => {});
+  state.dispatchUi.syncStatus = degraded ? "degraded" : "idle";
+  state.dispatchUi.lastRefresh = degraded ? state.dispatchUi.lastRefresh : new Date().toISOString();
+  renderTechnicianReport();
   return report;
 }
 
 async function dispatchWorkflowAction(dispatchId, action, extra = {}) {
-  const res = await api(`/api/dispatch/${encodeURIComponent(dispatchId)}/${action}`, {
+  await api(`/api/dispatch/${encodeURIComponent(dispatchId)}/${action}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(extra)
+    body: JSON.stringify({ ...extra, technicianId: extra.technicianId || "tech-demo" })
   });
-  await loadDispatchReport();
-  renderTechnicianReport();
+  await refreshTechnicianDispatch();
   showToast("◇", `Dispatch ${action.replace("-", " ")}.`);
-  return res;
 }
 
-async function submitDispatchFeedback(dispatchId, payload) {
-  const res = await api(`/api/dispatch/${encodeURIComponent(dispatchId)}/feedback`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  if (res.calibration) state.calibration = res.calibration;
-  await loadDispatchReport();
-  renderTechnicianReport();
-  showToast("◇", "Feedback saved — calibration updated.");
-  return res;
+async function createWorkOrderForDispatch(dispatch) {
+  ensureDispatchUiState();
+  const dispatchId = dispatch.dispatchId;
+  delete state.dispatchUi.cardErrors[dispatchId];
+  try {
+    const res = await api(`/api/dispatch/${encodeURIComponent(dispatchId)}/work-order`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ technicianId: "tech-demo", createdBy: "demo" })
+    });
+    if (res.reusedExisting) {
+      state.dispatchUi.cardMessages[dispatchId] = "Work order already open for this issue.";
+    } else {
+      state.dispatchUi.cardMessages[dispatchId] =
+        "Work order open. Continue here or in Active Work Orders.";
+    }
+    await refreshTechnicianDispatch();
+    return res;
+  } catch (err) {
+    state.dispatchUi.cardErrors[dispatchId] = err.message || "Could not create work order.";
+    renderTechnicianReport();
+    throw err;
+  }
+}
+
+async function resolveWorkOrderOutcome(workOrderId, uiOutcome, notes) {
+  ensureDispatchUiState();
+  delete state.dispatchUi.resolveErrors[workOrderId];
+  try {
+    const res = await api(`/api/work-orders/${encodeURIComponent(workOrderId)}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        outcome: H.mapResolveOutcomeForApi(uiOutcome),
+        notes: notes || "",
+        technicianId: "tech-demo"
+      })
+    });
+    const wo = res.workOrder || {};
+    state.dispatchUi.resolveMessages[workOrderId] = H.formatResolveOutcomeMessage(wo, uiOutcome);
+    state.dispatchUi.expandedResolveId = null;
+    await refreshTechnicianDispatch();
+    return res;
+  } catch (err) {
+    state.dispatchUi.resolveErrors[workOrderId] = err.message || "Could not save outcome.";
+    renderTechnicianReport();
+    throw err;
+  }
+}
+
+async function resetDemoScenario() {
+  try {
+    const res = await api("/api/demo/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clearWorkOrders: true, resetCalibration: true })
+    });
+    if (!res || res.ok === false) throw new Error("Demo reset failed");
+    await refreshTechnicianDispatch();
+    if (typeof refreshFleetHealth === "function") await refreshFleetHealth().catch(() => {});
+    showToast("◇", "Demo reset complete. R-002 dispatch is ready.");
+    return res;
+  } catch (_err) {
+    showToast(
+      "⚠",
+      "Demo reset endpoint not available — reseed from terminal with: npm run seed:demo"
+    );
+  }
+}
+
+function renderChip(label, className) {
+  return `<span class="${escapeHtml(className)}">${escapeHtml(H.sanitizeDisplayValue(label))}</span>`;
+}
+
+function renderEvidenceDrawer(dispatch) {
+  const rows = H.buildEvidenceRows(dispatch);
+  const evidenceBody = rows.length
+    ? rows
+        .map(
+          (row) => `
+        <div class="td-evidence-row">
+          <strong>${escapeHtml(row.name)}</strong>
+          <div class="td-card-sub">${escapeHtml(row.direction)} · ${escapeHtml(row.reason)} · Latest ${escapeHtml(row.latest)}</div>
+        </div>`
+        )
+        .join("")
+    : `<p class="td-card-sub">No signal evidence available.</p>`;
+
+  return `
+    <details class="td-drawer">
+      <summary>Evidence</summary>
+      <div class="td-drawer-body">${evidenceBody}</div>
+    </details>`;
+}
+
+function renderSopDrawer(dispatch, workOrderLookup) {
+  const rows = H.buildSopRows(dispatch, workOrderLookup);
+  const body = rows.length
+    ? rows
+        .map(
+          (row) => `
+        <div class="td-sop-row">
+          <strong>${escapeHtml(row.title)}</strong>
+          <p class="td-card-sub">${escapeHtml(row.relevance)}</p>
+          <p class="td-card-sub">Confidence ${escapeHtml(row.confidence)} · ${escapeHtml(row.source)}</p>
+        </div>`
+        )
+        .join("")
+    : `<p class="td-card-sub">No SOP references found for this failure mode.</p>`;
+
+  return `
+    <details class="td-drawer">
+      <summary>SOP references</summary>
+      <div class="td-drawer-body">${body}</div>
+    </details>`;
+}
+
+function renderDispatchCard(dispatch, workOrderLookup) {
+  ensureDispatchUiState();
+  const dispatchId = dispatch.dispatchId;
+  const status = dispatch.workflow?.status || "new";
+  const primary = H.getDispatchPrimaryAction(dispatch);
+  const linkedWo = workOrderLookup[dispatchId];
+  const snapshotLine = linkedWo?.beforeSnapshot ? H.buildSnapshotSummary(linkedWo.beforeSnapshot) : "";
+  const mode = H.failureModeLabel(dispatch.prediction?.failureMode);
+  const ttf = H.formatCompactTtf(dispatch.prediction?.estimatedTimeToFailureHours);
+  const cardMsg = state.dispatchUi.cardMessages[dispatchId];
+  const cardErr = state.dispatchUi.cardErrors[dispatchId];
+  const criticalClass =
+    String(dispatch.priority || "").toLowerCase() === "critical" ? " td-dispatch-card--critical" : "";
+
+  let primaryHtml = "";
+  if (primary.type === "create_work_order") {
+    primaryHtml = `<button type="button" class="tr-btn-primary td-primary-action" data-create-wo="${escapeHtml(dispatchId)}">${escapeHtml(primary.label)}</button>`;
+  } else if (primary.type === "work_order_open") {
+    primaryHtml = `
+      <span class="td-primary-label">${escapeHtml(primary.label)}</span>
+      <button type="button" class="tr-btn-ghost td-primary-action" data-open-wo="${escapeHtml(primary.workOrderId)}">${escapeHtml(primary.secondaryLabel)}</button>`;
+  }
+
+  const bannerHtml = cardErr
+    ? `<div class="td-card-banner td-card-banner--error">${escapeHtml(cardErr)}</div>`
+    : cardMsg
+      ? `<div class="td-card-banner td-card-banner--info">${escapeHtml(cardMsg)}</div>`
+      : "";
+
+  return `
+    <article class="td-dispatch-card${criticalClass}" data-dispatch-id="${escapeHtml(dispatchId)}" id="dispatch-${escapeHtml(dispatchId)}">
+      <header class="td-card-head">
+        <div class="td-card-head-main">
+          <strong>${escapeHtml(H.sanitizeDisplayValue(dispatch.robot?.robotName))}</strong>
+          <span class="td-card-sub">${escapeHtml(H.sanitizeDisplayValue(dispatch.robot?.robotId))} · Zone ${escapeHtml(H.sanitizeDisplayValue(dispatch.robot?.zone))}</span>
+        </div>
+      </header>
+      <div class="td-chip-row">
+        ${renderChip(`Priority ${H.sanitizeDisplayValue(dispatch.priority, "medium")}`, H.priorityChipClass(dispatch.priority))}
+        ${renderChip(H.getDispatchStatusLabel(status), H.statusChipClass(status))}
+      </div>
+      <p class="td-mode-line">${escapeHtml(mode)} · TTF ${escapeHtml(ttf)}</p>
+      <p class="td-trust-line">${escapeHtml(H.formatTrustReason(dispatch))}</p>
+      ${snapshotLine && snapshotLine !== "Telemetry snapshot not available." ? `<p class="td-snapshot-line">${escapeHtml(snapshotLine)}</p>` : ""}
+      ${bannerHtml}
+      ${primaryHtml}
+      <div class="td-secondary-actions">
+        <button type="button" class="tr-btn-ghost" data-dispatch-action="acknowledge" data-id="${escapeHtml(dispatchId)}">Acknowledge</button>
+        <button type="button" class="tr-btn-ghost" data-dispatch-action="defer" data-id="${escapeHtml(dispatchId)}">Defer</button>
+        <button type="button" class="tr-btn-ghost" data-dispatch-telemetry="${escapeHtml(dispatch.robot?.robotId)}">View telemetry</button>
+        <button type="button" class="tr-btn-ghost" data-dispatch-action="false-alarm" data-id="${escapeHtml(dispatchId)}">Mark false alarm</button>
+      </div>
+      ${renderEvidenceDrawer(dispatch)}
+      ${renderSopDrawer(dispatch, workOrderLookup)}
+    </article>`;
+}
+
+function renderWorkOrderCard(workOrder) {
+  ensureDispatchUiState();
+  const workOrderId = workOrder.workOrderId;
+  const expanded = state.dispatchUi.expandedResolveId === workOrderId;
+  const resolveMsg = state.dispatchUi.resolveMessages[workOrderId];
+  const resolveErr = state.dispatchUi.resolveErrors[workOrderId];
+  const steps = (workOrder.recommendedSteps || []).slice(0, 6);
+
+  return `
+    <article class="td-work-order-card" id="wo-${escapeHtml(workOrderId)}" data-work-order-id="${escapeHtml(workOrderId)}">
+      <header class="td-card-head">
+        <div class="td-card-head-main">
+          <strong>${escapeHtml(H.sanitizeDisplayValue(workOrder.robotName))}</strong>
+          <span class="td-card-sub">${escapeHtml(H.sanitizeDisplayValue(workOrder.workOrderId))} · Zone ${escapeHtml(H.sanitizeDisplayValue(workOrder.zone))}</span>
+        </div>
+      </header>
+      <div class="td-chip-row">
+        ${renderChip(H.getWorkOrderStatusLabel(workOrder.status), H.statusChipClass(workOrder.status))}
+        ${renderChip(H.failureModeLabel(workOrder.failureMode), "td-chip td-chip--neutral")}
+      </div>
+      <p class="td-card-sub">Created ${escapeHtml(H.formatHumanDate(workOrder.createdAt))}</p>
+      ${
+        workOrder.assignedTechnicianId
+          ? `<p class="td-card-sub">Assigned ${escapeHtml(H.sanitizeDisplayValue(workOrder.assignedTechnicianId))}</p>`
+          : ""
+      }
+      <p class="td-snapshot-line">${escapeHtml(H.buildSnapshotSummary(workOrder.beforeSnapshot))}</p>
+      <details class="td-drawer">
+        <summary>Recommended steps</summary>
+        <div class="td-drawer-body">
+          ${
+            steps.length
+              ? `<ol>${steps.map((s) => `<li>${escapeHtml(H.sanitizeDisplayValue(s))}</li>`).join("")}</ol>`
+              : `<p class="td-card-sub">No steps listed.</p>`
+          }
+        </div>
+      </details>
+      <div class="td-resolve-panel">
+        <button type="button" class="tr-btn-primary td-primary-action" data-toggle-resolve="${escapeHtml(workOrderId)}">${expanded ? "Hide resolve form" : "Resolve work order"}</button>
+        ${
+          expanded
+            ? `
+          <form class="td-resolve-form" data-resolve-form="${escapeHtml(workOrderId)}">
+            <label>Outcome
+              <select name="outcome" required>
+                <option value="repaired">Repaired</option>
+                <option value="false_alarm">False alarm</option>
+                <option value="deferred">Deferred</option>
+              </select>
+            </label>
+            <label>Notes
+              <textarea name="notes" rows="3" placeholder="Optional notes for the maintenance record"></textarea>
+            </label>
+            <button type="submit" class="tr-btn-primary">Save outcome</button>
+            ${resolveErr ? `<p class="td-resolve-error">${escapeHtml(resolveErr)}</p>` : ""}
+          </form>`
+            : ""
+        }
+        ${resolveMsg ? `<p class="td-outcome-note">${escapeHtml(resolveMsg)}</p>` : ""}
+      </div>
+    </article>`;
+}
+
+function formatAdminUpdateForDisplay(update) {
+  const summary = String(update?.summary || "").toLowerCase();
+  const title = String(update?.title || "").toLowerCase();
+  const updateId = String(update?.updateId || "");
+  let count = 1;
+  const countMatch = String(update?.summary || "").match(/(\d+)\s+kpi anomaly/i);
+  if (countMatch) count = Number(countMatch[1]) || 1;
+
+  if (
+    updateId.includes("kpi") ||
+    summary.includes("anomaly pattern") ||
+    summary.includes("fault signature") ||
+    summary.includes("correlated")
+  ) {
+    const noun = count === 1 ? "fault pattern" : "fault patterns";
+    return {
+      title: `${count} ${noun} detected across the fleet.`,
+      summary: "Automated monitoring noticed recurring trends worth a later review."
+    };
+  }
+
+  if (
+    summary.includes("verification") ||
+    summary.includes("pending confirmation") ||
+    title.includes("verification") ||
+    summary.includes("confirm")
+  ) {
+    const noun = count === 1 ? "maintenance action" : "maintenance actions";
+    return {
+      title: `${count} ${noun} pending confirmation.`,
+      summary: "Confirm completed work when your team is ready."
+    };
+  }
+
+  const noun = count === 1 ? "item" : "items";
+  return {
+    title: `${count} ${noun} flagged for review.`,
+    summary: "Automation noted something to check. No immediate floor repair is required."
+  };
 }
 
 function renderTechnicianReport() {
   const root = byId("technician-report-root");
   if (!root) return;
+  ensureDispatchUiState();
+
   const report = state.dispatchReport;
-  const sum = report?.summary || {
-    criticalCount: 0,
-    highCount: 0,
-    mediumCount: 0,
-    lowCount: 0,
-    approvalRequiredCount: 0,
-    technicianDispatchCount: 0
-  };
   const dispatches = report?.dispatches || [];
   const adminUpdates = report?.adminUpdates || [];
-  const emptyState =
-    report?.emptyState || "No predicted failures ready. Run telemetry analysis or check Fleet Health.";
-  const selected = dispatches.find((d) => d.dispatchId === state.selectedDispatchId) || dispatches[0] || null;
+  const workOrders = state.workOrders || [];
+  const workOrderLookup = H.indexWorkOrdersByDispatch(workOrders);
+  const openWorkOrders = workOrders.filter((w) =>
+    ["open", "in_progress", "assigned"].includes(String(w.status || "").toLowerCase())
+  );
 
-  const summaryHtml = `
-    <div class="td-summary-strip">
-      <div class="td-summary-stat"><span class="val critical">${sum.criticalCount || 0}</span><span class="lbl">Critical</span></div>
-      <div class="td-summary-stat"><span class="val high">${sum.highCount || 0}</span><span class="lbl">High</span></div>
-      <div class="td-summary-stat"><span class="val">${sum.mediumCount || 0}</span><span class="lbl">Medium</span></div>
-      <div class="td-summary-stat"><span class="val">${formatHours(sum.earliestFailureHours)}</span><span class="lbl">Earliest failure${sum.earliestFailureRobotId ? ` (${safeText(sum.earliestFailureRobotId)})` : ""}</span></div>
-      <div class="td-summary-stat"><span class="val">${sum.approvalRequiredCount || 0}</span><span class="lbl">Approval required</span></div>
+  const syncBanner =
+    state.dispatchUi.syncStatus === "failed" || state.dispatchUi.syncStatus === "degraded"
+      ? `<div class="td-sync-banner td-sync-banner--failed">${escapeHtml(
+          state.dispatchReport?.emptyState || "Dispatch report unavailable."
+        )} <button type="button" class="tr-btn-ghost" id="td-retry-sync-btn">Retry</button></div>`
+      : state.dispatchUi.syncStatus === "syncing"
+        ? `<div class="td-sync-banner">Syncing dispatch and work orders…</div>`
+        : "";
+
+  const headerHtml = `
+    <div class="td-header-metrics">
+      <div class="td-metric-card"><span class="td-metric-value">${H.getActiveQueueCount(report)}</span><span class="td-metric-label">Active queue</span></div>
+      <div class="td-metric-card"><span class="td-metric-value">${H.getCriticalNowCount(report)}</span><span class="td-metric-label">Critical now</span></div>
+      <div class="td-metric-card"><span class="td-metric-value">${H.getOpenWorkOrdersCount(workOrders)}</span><span class="td-metric-label">Open work orders</span></div>
+      <div class="td-metric-card"><span class="td-metric-value">${escapeHtml(H.formatHumanDate(state.dispatchUi.lastRefresh))}</span><span class="td-metric-label">Last refresh</span></div>
     </div>`;
 
   const dispatchCards = dispatches.length
-    ? dispatches
-        .map((d) => {
-          const mode = safeText(d.prediction?.failureMode, "unknown").replace(/_/g, " ");
-          const ttf = formatHours(d.prediction?.estimatedTimeToFailureHours);
-          const why =
-            (d.evidence?.signals || [])
-              .slice(0, 3)
-              .map((s) => `${formatSignalName(s.name)} ${safeText(s.direction, "flat")}`)
-              .join(" · ") || safeText(d.prediction?.reason, "See evidence below");
-          const steps = (d.recommendedAction?.steps || []).slice(0, 6);
-          const evidenceLines = (d.evidence?.signals || [])
-            .map(
-              (s) =>
-                `<li>${escapeHtml(formatSignalName(s.name))} ${escapeHtml(safeText(s.direction))} — ${escapeHtml(safeText(s.reason))}</li>`
-            )
-            .join("");
-          const selectedClass = selected?.dispatchId === d.dispatchId ? " td-dispatch-card--selected" : "";
-          return `
-          <article class="td-dispatch-card${selectedClass}" data-dispatch-id="${escapeHtml(d.dispatchId)}">
-            <header class="td-dispatch-head">
-              <span class="${tdPriorityClass(d.priority)}">${escapeHtml(safeText(d.priority, "medium"))}</span>
-              <div>
-                <strong>${escapeHtml(safeText(d.robot?.robotName))}</strong>
-                <span class="muted">${escapeHtml(safeText(d.robot?.robotId))} · Zone ${escapeHtml(safeText(d.robot?.zone))} · ${escapeHtml(safeText(d.robot?.status))}</span>
-              </div>
-            </header>
-            <h4 class="td-dispatch-title">Predicted ${escapeHtml(mode)} in ${escapeHtml(ttf)}</h4>
-            <div class="td-dispatch-metrics">
-              <span>Confidence ${escapeHtml(formatPercent(d.prediction?.confidence))}</span>
-              <span>Probability ${escapeHtml(formatPercent(d.prediction?.failureProbability))}</span>
-              <span>Health index ${escapeHtml(formatPercent(d.prediction?.healthIndex))}</span>
-              <span class="td-status-pill">${escapeHtml(safeText(d.workflow?.status, "new"))}</span>
-            </div>
-            <div class="td-dispatch-why">
-              <strong>Why Norfleet thinks this:</strong>
-              <p>${escapeHtml(why)}</p>
-              ${evidenceLines ? `<ul class="td-evidence-list">${evidenceLines}</ul>` : ""}
-            </div>
-            <div class="td-dispatch-do">
-              <strong>Do now:</strong>
-              <p>${escapeHtml(safeText(d.recommendedAction?.summary))}</p>
-              <ol>${steps.map((s) => `<li>${escapeHtml(s)}</li>`).join("")}</ol>
-            </div>
-            <footer class="td-dispatch-actions">
-              <button type="button" class="tr-btn-ghost" data-dispatch-action="acknowledge" data-id="${escapeHtml(d.dispatchId)}">Acknowledge</button>
-              <button type="button" class="tr-btn-ghost" data-dispatch-action="defer" data-id="${escapeHtml(d.dispatchId)}">Defer</button>
-              <button type="button" class="tr-btn-primary" data-dispatch-action="resolve" data-id="${escapeHtml(d.dispatchId)}">Resolve</button>
-              <button type="button" class="tr-btn-ghost" data-dispatch-action="false-alarm" data-id="${escapeHtml(d.dispatchId)}">False alarm</button>
-              <button type="button" class="tr-btn-ghost" data-dispatch-telemetry="${escapeHtml(d.robot?.robotId)}">View telemetry</button>
-            </footer>
-          </article>`;
-        })
-        .join("")
-    : `<p class="muted td-empty">${escapeHtml(emptyState)}</p>`;
+    ? dispatches.map((d) => renderDispatchCard(d, workOrderLookup)).join("")
+    : `<p class="td-empty-copy">${escapeHtml(H.getEmptyQueueCopy())}</p>`;
+
+  const workOrderCards = openWorkOrders.length
+    ? openWorkOrders.map((wo) => renderWorkOrderCard(wo)).join("")
+    : `<p class="td-empty-copy">No open work orders right now.</p>`;
 
   const adminHtml = adminUpdates.length
     ? adminUpdates
-        .map(
-          (u) => `
+        .map((u) => {
+          const display = formatAdminUpdateForDisplay(u);
+          return `
         <div class="td-admin-card">
-          <span class="td-admin-badge">Automation / rules</span>
-          <h4>${escapeHtml(safeText(u.title))}</h4>
-          <p>${escapeHtml(safeText(u.summary))}</p>
-        </div>`
-        )
+          <span class="td-chip td-chip--deferred">Automation update</span>
+          <h4>${escapeHtml(display.title)}</h4>
+          <p>${escapeHtml(display.summary)}</p>
+        </div>`;
+        })
         .join("")
-    : `<p class="muted">No automation updates suggested right now.</p>`;
+    : `<p class="td-card-sub">No automation updates suggested right now.</p>`;
 
-  const feedbackHtml = selected
-    ? `
-    <form class="td-feedback-form" id="td-feedback-form">
-      <input type="hidden" name="dispatchId" value="${escapeHtml(selected.dispatchId)}" />
-      <input type="hidden" name="robotId" value="${escapeHtml(selected.robot?.robotId)}" />
-      <input type="hidden" name="failureMode" value="${escapeHtml(selected.prediction?.failureMode)}" />
-      <input type="hidden" name="predictionId" value="${escapeHtml(selected.prediction?.predictionId || "")}" />
-      <label>Outcome
-        <select name="outcome" required>
-          <option value="confirmed_failure">Confirmed failure</option>
-          <option value="fixed_early">Fixed early</option>
-          <option value="false_alarm">False alarm</option>
-          <option value="not_enough_evidence">Not enough evidence</option>
-        </select>
-      </label>
-      <label>Action taken<textarea name="actionTaken" rows="2" placeholder="What did you do on the floor?"></textarea></label>
-      <label>Actual cause<input name="actualCause" type="text" placeholder="Root cause if known" /></label>
-      <label>Repair minutes<input name="repairMinutes" type="number" min="0" step="1" placeholder="30" /></label>
-      <label>Notes<textarea name="notes" rows="2"></textarea></label>
-      <button type="submit" class="tr-btn-primary">Save feedback</button>
-    </form>`
-    : `<p class="muted">Select a dispatch above to record repair outcome.</p>`;
-
-  const devMetaHtml = report?.modelInfo
-    ? `Provider: ${escapeHtml(safeText(report.modelInfo.provider))} · Model: ${escapeHtml(safeText(report.modelInfo.model))} · Backend: ${escapeHtml(safeText(report.modelInfo.persistenceBackend || state.persistenceBackend))}`
-    : `Provider: ${escapeHtml(displayAiProviderName(state.aiUsage.provider))} · Model: ${escapeHtml(displayAiModelForUi(state.aiUsage.provider, state.aiUsage.model))}`;
+  const showDev = H.shouldShowDemoTools(report);
 
   root.innerHTML = `
-    <header class="tr-intro">
-      <h2>Technician Dispatch</h2>
-      <p class="muted">Predicted robot failures and repair actions ranked by urgency.</p>
-    </header>
-
-    <section class="tr-block">
-      <div class="tr-block-head">
-        <h3 class="tr-section-title">Summary</h3>
-        <button type="button" class="tr-btn-primary" id="td-refresh-btn">Refresh dispatch</button>
+    <div class="td-page-header">
+      <div>
+        <h2>Technician Dispatch</h2>
+        <p class="muted">Floor-first repair queue for predicted robot failures.</p>
       </div>
-      ${summaryHtml}
-    </section>
+      <button type="button" class="tr-btn-primary" id="td-refresh-btn">Refresh</button>
+    </div>
+    ${syncBanner}
+    ${headerHtml}
 
-    <section class="tr-block">
-      <h3 class="tr-section-title">Priority dispatch queue</h3>
-      <p class="muted" style="margin:6px 0 12px;font-size:12px">Robots ranked by urgency — inspect highest priority first.</p>
+    <section class="td-section tr-block">
+      <h3 class="td-section-title">Priority dispatch queue</h3>
+      <p class="td-section-note">Inspect highest urgency first. One primary action per card.</p>
       <div class="td-dispatch-queue">${dispatchCards}</div>
     </section>
 
-    <section class="tr-block td-admin-section">
-      <h3 class="tr-section-title">Admin updates suggested</h3>
-      <p class="muted" style="margin:6px 0 12px;font-size:12px">Agent, threshold, and automation changes — not technician repair tasks.</p>
-      <div class="td-admin-grid">${adminHtml}</div>
+    <section class="td-section tr-block">
+      <h3 class="td-section-title">Active work orders</h3>
+      <p class="td-section-note">Open maintenance tasks linked to dispatches.</p>
+      <div class="td-work-order-list">${workOrderCards}</div>
     </section>
 
-    <section class="tr-block">
-      <h3 class="tr-section-title">Close the loop</h3>
-      <p class="muted" style="margin:6px 0 12px;font-size:12px">Tell Norfleet whether the prediction was right — this improves calibration.</p>
-      ${feedbackHtml}
-    </section>
-
-    <details class="tr-dev-details tr-block">
-      <summary>Demo / Dev Tools</summary>
-      <div class="td-dev-tools">
-        <button type="button" class="tr-btn-ghost" id="td-replay-btn">Fast-forward simulation 60×</button>
-        <button type="button" class="tr-btn-ghost" id="td-reset-demo-btn">Reset demo (refresh)</button>
-        <button type="button" class="tr-btn-ghost" id="td-refresh-pred-btn">Refresh predictions</button>
-      </div>
-      <details style="margin-top:10px">
-        <summary>Model trace / developer info</summary>
-        <p class="tr-dev-meta">${devMetaHtml}</p>
-      </details>
+    <details class="td-collapsed-section tr-block">
+      <summary>Admin / automation updates (${adminUpdates.length})</summary>
+      <div class="td-collapsed-body td-admin-grid">${adminHtml}</div>
     </details>
-  `;
+
+    ${
+      showDev
+        ? `
+    <details class="td-collapsed-section td-dev-isolated tr-block">
+      <summary>Demo / Dev Tools</summary>
+      <div class="td-collapsed-body td-dev-tools">
+        <button type="button" class="tr-btn-ghost" id="td-reset-demo-btn">Reset demo scenario</button>
+      </div>
+    </details>`
+        : ""
+    }`;
+
+  byId("td-refresh-btn")?.addEventListener("click", () => refreshTechnicianDispatch().catch((e) => showToast("⚠", e.message)));
+  byId("td-retry-sync-btn")?.addEventListener("click", () => refreshTechnicianDispatch().catch((e) => showToast("⚠", e.message)));
+  byId("td-reset-demo-btn")?.addEventListener("click", () => resetDemoScenario());
+
+  root.querySelectorAll("[data-create-wo]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const dispatch = dispatches.find((d) => d.dispatchId === btn.dataset.createWo);
+      if (dispatch) createWorkOrderForDispatch(dispatch).catch(() => {});
+    });
+  });
+
+  root.querySelectorAll("[data-open-wo]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      byId(`wo-${btn.dataset.openWo}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
 
   root.querySelectorAll("[data-dispatch-action]").forEach((btn) => {
-    btn.onclick = (e) => {
+    btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      dispatchWorkflowAction(btn.dataset.id, btn.dataset.dispatchAction, { technicianId: "technician" }).catch((err) =>
+      dispatchWorkflowAction(btn.dataset.id, btn.dataset.dispatchAction, { technicianId: "tech-demo" }).catch((err) =>
         showToast("⚠", err.message)
       );
-    };
+    });
   });
+
   root.querySelectorAll("[data-dispatch-telemetry]").forEach((btn) => {
-    btn.onclick = (e) => {
+    btn.addEventListener("click", (e) => {
       e.stopPropagation();
       state.fleetHealthFocusRobot = btn.dataset.dispatchTelemetry;
       switchView("fleet-health", getNavTab("fleet-health"));
       refreshFleetHealth().catch(() => {});
-    };
+    });
   });
-  root.querySelectorAll(".td-dispatch-card").forEach((card) => {
-    card.onclick = (e) => {
-      if (e.target.closest("button")) return;
-      state.selectedDispatchId = card.dataset.dispatchId;
+
+  root.querySelectorAll("[data-toggle-resolve]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.dispatchUi.expandedResolveId =
+        state.dispatchUi.expandedResolveId === btn.dataset.toggleResolve ? null : btn.dataset.toggleResolve;
       renderTechnicianReport();
-    };
+    });
   });
 
-  const refreshBtn = byId("td-refresh-btn");
-  if (refreshBtn) {
-    refreshBtn.onclick = () =>
-      loadDispatchReport()
-        .then(() => renderTechnicianReport())
-        .catch((e) => showToast("⚠", e.message));
-  }
-  const replayBtn = byId("td-replay-btn");
-  if (replayBtn) replayBtn.onclick = () => runSimReplay(60).catch((e) => showToast("⚠", e.message));
-  const resetBtn = byId("td-reset-demo-btn");
-  if (resetBtn) {
-    resetBtn.onclick = () =>
-      refreshFleetHealth()
-        .then(() => loadDispatchReport())
-        .then(() => renderTechnicianReport())
-        .catch((e) => showToast("⚠", e.message));
-  }
-  const predBtn = byId("td-refresh-pred-btn");
-  if (predBtn) {
-    predBtn.onclick = () =>
-      refreshPredictions()
-        .then(() => loadDispatchReport())
-        .then(() => renderTechnicianReport())
-        .catch((e) => showToast("⚠", e.message));
-  }
-
-  const fbForm = byId("td-feedback-form");
-  if (fbForm) {
-    fbForm.onsubmit = (e) => {
+  root.querySelectorAll("[data-resolve-form]").forEach((form) => {
+    form.addEventListener("submit", (e) => {
       e.preventDefault();
-      const fd = new FormData(fbForm);
-      submitDispatchFeedback(fd.get("dispatchId"), {
-        outcome: fd.get("outcome"),
-        robotId: fd.get("robotId"),
-        failureMode: fd.get("failureMode"),
-        predictionId: fd.get("predictionId") || undefined,
-        actionTaken: fd.get("actionTaken"),
-        actualCause: fd.get("actualCause"),
-        repairMinutes: fd.get("repairMinutes") ? Number(fd.get("repairMinutes")) : undefined,
-        notes: fd.get("notes"),
-        technicianId: "technician"
-      }).catch((err) => showToast("⚠", err.message));
-    };
-  }
+      const fd = new FormData(form);
+      resolveWorkOrderOutcome(form.dataset.resolveForm, fd.get("outcome"), fd.get("notes")).catch(() => {});
+    });
+  });
 }
 
-window.loadDispatchReport = loadDispatchReport;
+const browserGlobal = typeof window !== "undefined" ? window : typeof globalThis !== "undefined" ? globalThis : {};
+
+browserGlobal.loadDispatchReport = loadDispatchReport;
+browserGlobal.loadWorkOrders = loadWorkOrders;
+browserGlobal.refreshTechnicianDispatch = refreshTechnicianDispatch;
+browserGlobal.renderTechnicianReport = renderTechnicianReport;
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    createSafeDispatchUiHelpers,
+    renderDispatchCard,
+    renderWorkOrderCard,
+    renderTechnicianReport
+  };
+}

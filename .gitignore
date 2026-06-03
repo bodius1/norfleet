@@ -4,3 +4,9 @@ node_modules/
 *.log
 .DS_Store
 data/
+ml-service/data/raw/ 
+ml-service/venv/ 
+venv/ 
+data/norfleet.json 
+.env 
+get-pip.py 

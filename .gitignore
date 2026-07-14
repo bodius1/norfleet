@@ -10,3 +10,6 @@ venv/
 data/norfleet.json 
 .env 
 get-pip.py 
+__pycache__/ 
+*.pyc 
+*.pyo 

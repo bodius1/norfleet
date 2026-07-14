@@ -1,3 +1,4 @@
+// Phase 2 MVP
 const path = require("path");
 const express = require("express");
 const cors = require("cors");
@@ -21,6 +22,8 @@ const {
   getCachedInstruction,
   setCachedInstruction
 } = require("./services/norfleetPlatform");
+const { buildRecommendation } = require("./services/recommendationEngine");
+const { DEMO_SCENARIO } = require("./demo/demoSeed");
 const {
   validateAnalyzeKpisInput,
   validateTechnicianReportInput,
@@ -558,6 +561,13 @@ app.post("/api/telemetry/ingest", async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/api/demo/start", async (req, res) => {
+  platform.repo.setDemoScenario(DEMO_SCENARIO);
+  platform.start();
+  await platform.runAllPredictions().catch(() => {});
+  res.json({ ok: true, scenario: DEMO_SCENARIO });
+});
+
 app.post("/api/sim/replay", async (req, res) => {
   const valid = validateReplayInput(req.body || {});
   if (!valid.ok) return res.status(400).json({ error: valid.error });
@@ -911,7 +921,121 @@ app.get("/api/stream", (req, res) => {
 
   send();
   const intv = setInterval(send, 2500);
-  req.on("close", () => clearInterval(intv));
+
+  const onPrediction = (pred) => {
+    res.write(`event: prediction\ndata: ${JSON.stringify(pred)}\n\n`);
+  };
+  const onAlert = (alert) => {
+    res.write(`event: alert\ndata: ${JSON.stringify(alert)}\n\n`);
+  };
+  platform.emitter.on("prediction", onPrediction);
+  platform.emitter.on("alert", onAlert);
+
+  req.on("close", () => {
+    clearInterval(intv);
+    platform.emitter.off("prediction", onPrediction);
+    platform.emitter.off("alert", onAlert);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Alert endpoints
+// ---------------------------------------------------------------------------
+
+app.get("/api/alerts", (req, res) => {
+  const { status, robotId, failureMode, severity, limit } = req.query;
+  const filter = {};
+  if (status) filter.status = status;
+  if (robotId) filter.robotId = robotId;
+  if (failureMode) filter.failureMode = failureMode;
+  if (severity) filter.severity = severity;
+  if (limit) filter.limit = Number(limit);
+  res.json(platform.alertEngine.list(filter));
+});
+
+app.post("/api/alerts/:id/acknowledge", (req, res) => {
+  const id = Number(req.params.id) || req.params.id;
+  const { acknowledgedBy } = req.body || {};
+  platform.alertEngine.acknowledge(id, acknowledgedBy || null);
+  res.json({ ok: true });
+});
+
+app.post("/api/alerts/:id/resolve", (req, res) => {
+  const id = Number(req.params.id) || req.params.id;
+  platform.alertEngine.resolve(id);
+  res.json({ ok: true });
+});
+
+const FEEDBACK_OUTCOMES = ["confirmed_failure", "false_positive", "fixed_early", "unresolved"];
+
+app.post("/api/feedback", (req, res) => {
+  const {
+    alertId, robotId, predictedFailureMode, confirmedFailureMode,
+    outcome, actionTaken, partsReplaced, technicianNotes
+  } = req.body || {};
+  if (!robotId || !outcome || !FEEDBACK_OUTCOMES.includes(outcome)) {
+    return res.status(400).json({ error: "robotId and valid outcome required" });
+  }
+  const row = platform.repo.addTechnicianFeedback({
+    dispatchId: alertId || null,
+    robotId,
+    failureMode: predictedFailureMode || null,
+    actualCause: confirmedFailureMode || null,
+    outcome,
+    actionTaken: actionTaken || null,
+    partsUsed: partsReplaced ? [partsReplaced] : [],
+    notes: technicianNotes || null,
+    createdAt: new Date().toISOString()
+  });
+  if (alertId) {
+    const resolveStatuses = ["confirmed_failure", "fixed_early", "false_positive"];
+    if (resolveStatuses.includes(outcome)) {
+      try { platform.alertEngine.resolve(alertId); } catch {}
+    }
+  }
+  res.json(row);
+});
+
+app.get("/api/robots/:robotId/feedback", (req, res) => {
+  const all = platform.repo.getTechnicianFeedback({});
+  const filtered = all.filter((r) => r.robotId === req.params.robotId);
+  res.json(filtered);
+});
+
+app.get("/api/robots/:robotId/recommendation", (req, res) => {
+  const { robotId } = req.params;
+  const preds = platform.getAllLatestPredictions();
+  const pred = preds.find((p) => p.robotId === robotId);
+  if (!pred) return res.status(404).json({ error: "no prediction available for this robot" });
+  const alerts = platform.alertEngine.list({ robotId, status: "open" });
+  const alert = alerts[0] || null;
+  const rec = buildRecommendation({
+    robotId,
+    failureMode: pred.failureMode,
+    severity: alert?.severity || null,
+    probability: pred.failureProbability,
+    ttfHours: pred.estimatedTimeToFailureHours,
+    topSignals: pred.contributingSignals
+  });
+  res.json(rec);
+});
+
+app.get("/api/alerts/:id", (req, res) => {
+  const id = Number(req.params.id) || req.params.id;
+  const all = platform.alertEngine.list({});
+  const alert = all.find((a) => a.id == id);
+  if (!alert) return res.status(404).json({ error: "alert not found" });
+  const preds = platform.getAllLatestPredictions();
+  const pred = preds.find((p) => p.robotId === alert.robotId) || null;
+  const recommendation = buildRecommendation({
+    robotId: alert.robotId,
+    failureMode: alert.failureMode,
+    severity: alert.severity,
+    probability: alert.probability,
+    ttfHours: alert.ttfHours,
+    topSignals: pred?.contributingSignals || []
+  });
+  res.json({ ...alert, recommendation });
 });
 
 app.listen(PORT, () => {

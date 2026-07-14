@@ -38,6 +38,7 @@ const state = {
     data: { dataMode: "mock", telemetryAdapter: "simulated", kpiApiBaseUrl: "", robotApiBaseUrl: "", hasKpiApiKey: false }
   },
   predictions: [],
+  alerts: [],
   calibration: null,
   persistenceBackend: "unknown",
   dispatchReport: null,
@@ -294,6 +295,29 @@ function applyDemoModeUi() {
   document.body.classList.toggle("norfleet-demo", NORFLEET_DEMO_MODE);
   const productLabel = byId("header-product-label");
   if (productLabel) productLabel.textContent = NORFLEET_DEMO_MODE ? "Norfleet MVP" : "Norfleet";
+  const demoBtn = byId("demo-toggle-btn");
+  if (demoBtn) {
+    demoBtn.textContent = NORFLEET_DEMO_MODE ? "Exit demo" : "Demo mode";
+    if (NORFLEET_DEMO_MODE) demoBtn.style.color = "var(--accent)";
+  }
+}
+
+async function toggleDemoMode() {
+  if (NORFLEET_DEMO_MODE) {
+    window.location.href = window.location.pathname;
+    return;
+  }
+  const btn = byId("demo-toggle-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Starting…"; }
+  try {
+    await api("/api/demo/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const url = new URL(window.location.href);
+    url.searchParams.set("demo", "1");
+    window.location.href = url.toString();
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = "Demo mode"; }
+    showToast("⚠", `Demo start failed: ${e.message}`);
+  }
 }
 
 function tdPriorityClass(priority) {
@@ -1029,9 +1053,177 @@ function formatFleetHealthTtf(p) {
   return `<span class="fh-ttf-pending" title="Time to failure estimate requires more telemetry history.">Calculating...</span>`;
 }
 
+async function fetchAlerts() {
+  try {
+    const data = await api("/api/alerts?status=open&limit=50");
+    state.alerts = Array.isArray(data) ? data : [];
+  } catch {
+    state.alerts = [];
+  }
+}
+
+async function acknowledgeAlert(id) {
+  await api(`/api/alerts/${encodeURIComponent(id)}/acknowledge`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  await fetchAlerts();
+  renderFleetOverview();
+  renderAlertsList();
+}
+
+async function resolveAlert(id) {
+  await api(`/api/alerts/${encodeURIComponent(id)}/resolve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  await fetchAlerts();
+  renderFleetOverview();
+  renderAlertsList();
+}
+
+function renderFleetOverview() {
+  const root = byId("fleet-overview-root");
+  if (!root) return;
+  const preds = state.predictions || [];
+  let healthy = 0, warning = 0, critical = 0;
+  preds.forEach((p) => {
+    const hi = p.healthIndex ?? 1;
+    const pct = hi <= 1 ? hi * 100 : hi;
+    if (pct < 40) critical++;
+    else if (pct <= 70) warning++;
+    else healthy++;
+  });
+  const total = preds.length;
+  const activeAlerts = (state.alerts || []).filter((a) => a.status === "open" || a.status === "acknowledged").length;
+  root.innerHTML = `<div class="fh-overview">
+    <div class="fh-overview-stat"><div class="fh-overview-val">${total}</div><div class="fh-overview-lbl">Robots</div></div>
+    <div class="fh-overview-stat stat-healthy"><div class="fh-overview-val">${healthy}</div><div class="fh-overview-lbl">Healthy</div></div>
+    <div class="fh-overview-stat stat-warning"><div class="fh-overview-val">${warning}</div><div class="fh-overview-lbl">Warning</div></div>
+    <div class="fh-overview-stat stat-critical"><div class="fh-overview-val">${critical}</div><div class="fh-overview-lbl">Critical</div></div>
+    <div class="fh-overview-stat stat-alerts"><div class="fh-overview-val">${activeAlerts}</div><div class="fh-overview-lbl">Active alerts</div></div>
+  </div>`;
+}
+
+function renderAlertsList() {
+  const root = byId("fleet-alerts-root");
+  if (!root) return;
+  const active = (state.alerts || []).filter((a) => a.status === "open" || a.status === "acknowledged");
+  const rows = active.map((a) => {
+    const ttfStr = a.ttfHours != null && Number.isFinite(Number(a.ttfHours)) ? `TTF ${a.ttfHours}h` : "TTF —";
+    const sevClass = `fh-alert-sev-${escapeHtml(a.severity || "Low")}`;
+    const ackBtn = a.status === "open"
+      ? `<button type="button" class="fh-alert-btn fh-alert-btn-ack" onclick="acknowledgeAlert(${JSON.stringify(a.id)})">Acknowledge</button>`
+      : `<span class="fh-alert-status">Acknowledged</span>`;
+    const fbkToggleId = `fbk-toggle-${a.id}`;
+    return `<div class="fh-alert-row" id="alert-row-${escapeHtml(String(a.id))}">
+      <span class="fh-alert-sev ${sevClass}">${escapeHtml(a.severity || "Low")}</span>
+      <div class="fh-alert-info">
+        <div class="fh-alert-robot">${escapeHtml(a.robotId)}</div>
+        <div class="fh-alert-mode">${escapeHtml((a.failureMode || "").replace(/_/g, " "))}</div>
+      </div>
+      <span class="fh-alert-ttf">${ttfStr}</span>
+      <div class="fh-alert-actions">
+        ${ackBtn}
+        <button type="button" class="fh-alert-btn fh-alert-btn-resolve" onclick="resolveAlert(${JSON.stringify(a.id)})">Resolve</button>
+        <button type="button" class="fh-alert-btn fh-alert-feedback-btn" id="${escapeHtml(fbkToggleId)}" onclick="toggleFeedbackForm(${JSON.stringify(a.id)},${JSON.stringify(a.robotId)},${JSON.stringify(a.failureMode)})">Feedback</button>
+      </div>
+    </div>`;
+  });
+  root.innerHTML = `<div class="fh-alerts-section">
+    <div class="fh-alerts-header">
+      <span class="fh-alerts-title">Active alerts</span>
+      ${active.length ? `<span class="fh-alerts-count">${active.length}</span>` : ""}
+    </div>
+    ${rows.length ? rows.join("") : `<div class="fh-alerts-empty">No active alerts.</div>`}
+  </div>`;
+}
+
+const FAILURE_MODE_OPTIONS = ["bearing_wear", "battery_degradation", "motor_creep", "pick_drift"];
+
+function feedbackFormHtml(alertId, robotId, predictedFailureMode) {
+  const modeOpts = FAILURE_MODE_OPTIONS.map(
+    (m) => `<option value="${m}"${m === predictedFailureMode ? " selected" : ""}>${m.replace(/_/g, " ")}</option>`
+  ).join("");
+  return `<div class="fh-feedback-form" id="feedback-form-${escapeHtml(String(alertId))}">
+    <div class="fh-feedback-form-row">
+      <label>Confirmed failure mode
+        <select id="fbk-mode-${escapeHtml(String(alertId))}">${modeOpts}</select>
+      </label>
+      <label>Outcome
+        <select id="fbk-outcome-${escapeHtml(String(alertId))}">
+          <option value="confirmed_failure">Confirmed failure</option>
+          <option value="fixed_early">Fixed early</option>
+          <option value="false_positive">False positive</option>
+          <option value="unresolved">Unresolved</option>
+        </select>
+      </label>
+    </div>
+    <div class="fh-feedback-form-row">
+      <label>Action taken
+        <input type="text" id="fbk-action-${escapeHtml(String(alertId))}" placeholder="e.g. replaced bearing">
+      </label>
+      <label>Parts replaced
+        <input type="text" id="fbk-parts-${escapeHtml(String(alertId))}" placeholder="e.g. bearing assembly">
+      </label>
+    </div>
+    <label>Technician notes
+      <textarea id="fbk-notes-${escapeHtml(String(alertId))}" placeholder="Optional notes…"></textarea>
+    </label>
+    <div class="fh-feedback-submit-row">
+      <button type="button" class="fh-alert-btn fh-alert-btn-resolve" onclick="submitAlertFeedback(${JSON.stringify(alertId)},${JSON.stringify(robotId)},${JSON.stringify(predictedFailureMode)})">Submit feedback</button>
+      <button type="button" class="fh-feedback-cancel" onclick="closeFeedbackForm(${JSON.stringify(alertId)})">Cancel</button>
+    </div>
+  </div>`;
+}
+
+function toggleFeedbackForm(alertId, robotId, failureMode) {
+  const existing = byId(`feedback-form-${alertId}`);
+  if (existing) { existing.remove(); return; }
+  const row = byId(`alert-row-${alertId}`);
+  if (!row) return;
+  const formEl = document.createElement("div");
+  formEl.style.width = "100%";
+  formEl.innerHTML = feedbackFormHtml(alertId, robotId, failureMode);
+  row.insertAdjacentElement("afterend", formEl.firstElementChild);
+}
+
+function closeFeedbackForm(alertId) {
+  const form = byId(`feedback-form-${alertId}`);
+  if (form) form.remove();
+}
+
+async function submitAlertFeedback(alertId, robotId, predictedFailureMode) {
+  const g = (id) => { const el = byId(id); return el ? el.value : ""; };
+  const payload = {
+    alertId,
+    robotId,
+    predictedFailureMode,
+    confirmedFailureMode: g(`fbk-mode-${alertId}`),
+    outcome: g(`fbk-outcome-${alertId}`),
+    actionTaken: g(`fbk-action-${alertId}`),
+    partsReplaced: g(`fbk-parts-${alertId}`),
+    technicianNotes: g(`fbk-notes-${alertId}`)
+  };
+  try {
+    await api("/api/feedback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    showToast("◉", `Feedback recorded for ${robotId}`);
+    await fetchAlerts();
+    renderFleetOverview();
+    renderAlertsList();
+  } catch (e) {
+    showToast("⚠", e.message);
+  }
+}
+
 async function renderFleetHealth() {
   const root = byId("fleet-health-root");
   if (!root) return;
+  root.innerHTML = `<div class="muted" style="padding:12px 0">Loading predictions…</div>`;
+  let fetchError = null;
+  try {
+    await refreshPredictions();
+  } catch (e) {
+    fetchError = e.message;
+  }
+  if (fetchError) {
+    root.innerHTML = `<div class="muted" style="padding:12px 0;color:#f87171">Failed to load predictions: ${escapeHtml(fetchError)}</div>`;
+    return;
+  }
   const preds = [...(state.predictions || [])].sort(
     (a, b) => (a.estimatedTimeToFailureHours ?? 999) - (b.estimatedTimeToFailureHours ?? 999)
   );
@@ -1054,6 +1246,8 @@ async function renderFleetHealth() {
         p.alert && typeof switchView === "function"
           ? `<button type="button" class="fh-link-btn" data-fh-dispatch="${escapeHtml(p.robotId)}">View dispatch</button>`
           : "";
+      const srcClass = p.predictionSource === "ml" ? "fh-source-ml" : "fh-source-rule";
+      const srcLabel = p.predictionSource === "ml" ? "ML" : "Rule";
       return `<tr class="${rowClasses}">
         <td><strong>${escapeHtml(p.robotId)}</strong><br><span class="muted">${escapeHtml(p.robotName || "")}</span></td>
         <td>${escapeHtml(p.failureMode.replace(/_/g, " "))}</td>
@@ -1062,6 +1256,7 @@ async function renderFleetHealth() {
         <td>${formatPercent(p.confidence ?? 0)}</td>
         <td>${formatPercent(p.healthIndex ?? 0)}</td>
         <td>${miniSparkline(hi)}</td>
+        <td><span class="fh-source-badge ${srcClass}">${srcLabel}</span></td>
         <td class="fh-signals">${escapeHtml(sigs || "—")} ${dispatchLink}</td>
       </tr>`;
     })
@@ -1084,9 +1279,10 @@ async function renderFleetHealth() {
         <th><span class="fh-col-head"><span class="fh-col-title">Model certainty</span><span class="fh-col-hint" title="How sure the model is">How sure the model is</span></span></th>
         <th>Health index</th>
         <th>HI trend</th>
+        <th>Source</th>
         <th>Top signals</th>
       </tr></thead>
-      <tbody>${rows.length ? rows.join("") : `<tr><td colspan="8" class="muted">${escapeHtml(emptyRowCopy)}</td></tr>`}</tbody>
+      <tbody>${rows.length ? rows.join("") : `<tr><td colspan="9" class="muted">${escapeHtml(emptyRowCopy)}</td></tr>`}</tbody>
     </table>
     <div class="fh-calibration-summary">Alerts fire when failure risk exceeds 40% and robot health drops below 40%.</div>
     <details class="fh-calibration-details">
@@ -1101,6 +1297,9 @@ async function renderFleetHealth() {
       switchView("technician-report", getNavTab("technician-report"));
     };
   });
+  await fetchAlerts();
+  renderFleetOverview();
+  renderAlertsList();
 }
 
 let fhReplayBusy = false;
@@ -3098,6 +3297,27 @@ async function loadMetricsAndStream() {
     renderKpis(data.kpis);
     updateSummary(data.summary);
   };
+  state.stream.addEventListener("prediction", (event) => {
+    try {
+      const pred = JSON.parse(event.data);
+      const idx = state.predictions.findIndex((p) => p.robotId === pred.robotId);
+      if (idx >= 0) state.predictions[idx] = pred;
+      else state.predictions.push(pred);
+      renderPredictionBanner();
+      renderFleetOverview();
+    } catch {}
+  });
+  state.stream.addEventListener("alert", (event) => {
+    try {
+      const alert = JSON.parse(event.data);
+      const idx = state.alerts.findIndex((a) => a.id === alert.id);
+      if (idx >= 0) state.alerts[idx] = alert;
+      else state.alerts.unshift(alert);
+      renderFleetOverview();
+      renderAlertsList();
+      showToast("◉", `Alert: ${alert.robotId} · ${(alert.failureMode || "").replace(/_/g, " ")} [${alert.severity}]`);
+    } catch {}
+  });
   state.stream.onerror = () => {
     showToast("⚠", "Live stream interrupted. Reconnecting…");
     state.stream.close();
@@ -3153,10 +3373,19 @@ window.applyTechnicianAction = applyTechnicianAction;
 window.createAgentFromRecommendation = createAgentFromRecommendation;
 window.updateAgentFromRecommendation = updateAgentFromRecommendation;
 window.setTechnicianReviewed = setTechnicianReviewed;
+window.acknowledgeAlert = acknowledgeAlert;
+window.resolveAlert = resolveAlert;
+window.toggleFeedbackForm = toggleFeedbackForm;
+window.closeFeedbackForm = closeFeedbackForm;
+window.submitAlertFeedback = submitAlertFeedback;
+window.toggleDemoMode = toggleDemoMode;
 
 setInterval(() => {
   refreshPredictions().then(() => renderPredictionBanner()).catch(() => {});
 }, 8000);
+setInterval(() => {
+  fetchAlerts().then(() => { renderFleetOverview(); renderAlertsList(); }).catch(() => {});
+}, 15000);
 setInterval(updateClock, 1000);
 updateClock();
 bindEvents();

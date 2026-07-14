@@ -32,6 +32,12 @@ const {
 
 } = require("../contracts/runtimeShapes");
 
+const { normalizePredictionResult } = require("../contracts/dataSchemas");
+
+const { createAlertEngine } = require("./alertEngine");
+
+const { EventEmitter } = require("events");
+
 const crypto = require("crypto");
 
 
@@ -46,6 +52,37 @@ let predictionCounter = 0;
 
 
 
+/**
+ * JS-side alert evaluation — used to override any `alert` flag that came from
+ * the Python ML service so that Python never controls alert dispatch.
+ */
+function evaluateAlert(pred, calibration) {
+  if (!pred || pred.insufficientData) return false;
+  if (pred.estimatedTimeToFailureHours === null || !Number.isFinite(pred.estimatedTimeToFailureHours)) return false;
+  const mode = pred.failureMode || "bearing_wear";
+  const cal = (calibration || {})[mode] || {};
+  const minP = cal.minProbability ?? 0.55;
+  const horizonHours = cal.horizonHours ?? 48;
+  const minConf = cal.minConfidence ?? 0.35;
+  if (pred.failureProbability < minP) return false;
+  if (pred.confidence < minConf) return false;
+  if (pred.estimatedTimeToFailureHours > horizonHours) return false;
+  if (!pred.modeEvidence) return false;
+  if ((pred.healthIndex ?? 1) >= 0.9) return false;
+  return true;
+}
+
+/**
+ * Alert engine stub — receives a canonical PredictionResult and fires when
+ * the JS alert gate passes. Replace body with real notification/dispatch logic.
+ */
+function triggerAlertIfFired(pred, calibration, engine) {
+  if (evaluateAlert(pred, calibration) && engine) {
+    return engine.fire(pred, calibration);
+  }
+  return null;
+}
+
 function createPlatform(options = {}) {
   const mlPredictClient = options.mlPredictClient || null;
   const mlOptions = options.mlOptions || {};
@@ -53,6 +90,10 @@ function createPlatform(options = {}) {
   const repo = createRepository();
 
   repo.initSchema();
+
+  const alertEngine = createAlertEngine(repo);
+
+  const emitter = new EventEmitter();
 
   const timeSeries = createTimeSeriesStore(repo);
 
@@ -360,9 +401,13 @@ function createPlatform(options = {}) {
 
     let result = null;
 
+    let usedMl = false;
+
     if (mlPredictClient?.predictWithMlService) {
 
       result = await mlPredictClient.predictWithMlService(computed, mlOptions);
+
+      if (result) usedMl = true;
 
     }
 
@@ -372,12 +417,30 @@ function createPlatform(options = {}) {
 
     }
 
+    // Step 5 pre-condition: Python must not control alert dispatch
+    if (usedMl) result.alert = evaluateAlert(result, calibration);
+
+    result.predictionSource = usedMl ? "ml" : "rule";
+
     result.id = result.id || `P-${++predictionCounter}`;
 
     result.ts = nowTs;
 
     result.robotName = robot.name;
 
+    // Step 5: normalize to canonical PredictionResult shape (contracts/dataSchemas.js)
+    const canonical = normalizePredictionResult(result);
+
+    // Step 6: persist and broadcast prediction
+    const storedPrediction = { ...canonical, createdAt: new Date().toISOString() };
+    repo.addPredictionEvent(storedPrediction);
+    emitter.emit("prediction", storedPrediction);
+
+    // Step 7: pass to alert engine; broadcast if a new alert fired
+    const firedAlert = triggerAlertIfFired(canonical, calibration, alertEngine);
+    if (firedAlert) emitter.emit("alert", firedAlert);
+
+    // Step 8: normalize for UI/API and cache in latestPredictions
     const normalized = normalizePrediction(result, robot.name);
 
     latestPredictions.set(robotId, normalized);
@@ -737,6 +800,10 @@ function createPlatform(options = {}) {
     ensureDemoTelemetryOnBoot,
 
     workflowOrderFromAgents,
+
+    alertEngine,
+
+    emitter,
 
     LOOKBACK_MS
 
